@@ -82,6 +82,11 @@ type Emulator struct {
 	// lastCluster is the most recently printed cluster, and carry is that
 	// cluster when it ended the previous Write.
 	lastCluster, carry clusterMark
+	// under holds what the last cluster printed at the last column wrote
+	// over, for that cluster's mark to refer to: lastCluster's, then
+	// carry's. No print comes between a carried cluster's and its undo, so
+	// one copy serves both.
+	under [2]uv.Cell
 
 	// atPhantom indicates if the cursor is out of bounds.
 	// When true, and a character is written, the cursor is moved to the next line.

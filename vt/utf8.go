@@ -90,6 +90,12 @@ type clusterMark struct {
 	// The cursor right after the cluster was printed.
 	curX, curY int
 	phantom    bool
+	// The cells a cluster printed at the last column wrote over, ending at
+	// its cell. Widened to two columns by the next Write, the cluster no
+	// longer fits there, so it wraps or isn't printed, and its undo has to
+	// put them back. A cluster printed anywhere else is printed again over
+	// the cells its undo blanks, and has none.
+	under []uv.Cell
 }
 
 // maxCarriedCluster bounds the cluster resumeCluster extends. Rejoining costs
@@ -115,12 +121,20 @@ func (e *Emulator) resumeCluster(r rune) {
 	if cluster, _ := ansi.FirstGraphemeCluster(joined, ansi.GraphemeWidth); len(cluster) != len(joined) {
 		return
 	}
-	if e.insertMode {
+	switch {
+	case len(c.under) > 0:
+		// Put back what the cluster wrote over at the last column. An
+		// insert there only sets the cell, so this undoes one too.
+		if !e.meter.spend(len(c.under)) {
+			return
+		}
+		e.scr.putCells(c.x+1-len(c.under), c.y, c.under)
+	case e.insertMode:
 		// Undo the insert that made room for it.
 		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), e.scr.scroll) {
 			return
 		}
-	} else {
+	default:
 		if !e.meter.spend(c.width) {
 			return
 		}
@@ -196,6 +210,37 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		e.lastChar, _ = utf8.DecodeRuneInString(content)
 	}
 
+	// A wide character the rest of the line can't hold isn't cut at the
+	// margin, as xterm's dotext writes a character only where it fits: under
+	// DECAWM it wraps first, leaving the last column as it was, and without,
+	// or when no line is wide enough for it, it isn't printed. Either way it
+	// leaves no wrap pending, and nothing the next Write can extend.
+	if cell.Width > 1 && x+cell.Width > e.scr.Width() {
+		if !awm || cell.Width > e.scr.Width() {
+			e.atPhantom = false
+			e.lastCluster.valid = false
+			return
+		}
+		e.index()
+		if e.meter.spent() {
+			return
+		}
+		_, y = e.scr.CursorPosition()
+		x = 0
+	}
+
+	// Keep what a print at the last column writes over, for the carried
+	// cluster's undo (see clusterMark): the last column, and the first half
+	// of a wide character it holds the second half of, which SetCell blanks.
+	var under []uv.Cell
+	if x == e.scr.Width()-1 {
+		from := x
+		if c := e.scr.CellAt(x, y); c != nil && c.Width == 0 && x > 0 {
+			from--
+		}
+		under = e.under[:e.scr.cellsAt(from, y, e.under[:])]
+	}
+
 	if e.insertMode {
 		// IRM: shift the rest of the line right to make room.
 		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), e.scr.scroll) {
@@ -211,11 +256,11 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	e.scr.SetCell(x, y, &cell)
 	cx, cy := x, y
 
-	// Handle phantom state at the end of the line
-	e.atPhantom = awm && x >= e.scr.Width()-1
-	if !e.atPhantom {
-		x += cell.Width
-	}
+	// A character that reaches the last column leaves the wrap pending, as
+	// dotext does for one that fills the rest of the line, whatever its
+	// width; setCursor holds the cursor on the last column.
+	x += cell.Width
+	e.atPhantom = awm && x >= e.scr.Width()
 
 	// NOTE: We don't reset the phantom state here, we handle it up above.
 	e.scr.setCursor(x, y, false)
@@ -223,5 +268,6 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// A cluster a charset mapped is not one the next Write can extend.
 		valid: cell.Content == content, scr: e.scr, content: content, x: cx, y: cy, width: cell.Width,
 		curX: e.scr.cur.X, curY: e.scr.cur.Y, phantom: e.atPhantom,
+		under: under,
 	}
 }
