@@ -653,8 +653,8 @@ func (s *Screen) InsertLine(n int) bool {
 // DeleteLine deletes n lines at the cursor position Y coordinate.
 // Only operates if cursor is within scroll region. Lines below cursor Y
 // are moved up, with blank lines inserted at the bottom of scroll region.
-// If scrollback is enabled and cursor is at top of scroll region, lines
-// are saved to the scrollback buffer before deletion.
+// If scrollback is enabled and cursor is at top of a scroll region that starts
+// at the first row, lines are saved to the scrollback buffer before deletion.
 // It returns true if the operation was successful.
 func (s *Screen) DeleteLine(n int) bool {
 	if n <= 0 {
@@ -676,12 +676,14 @@ func (s *Screen) DeleteLine(n int) bool {
 
 	fullWidth := s.scrollsFullWidth()
 
-	// Save lines to scrollback if we're at the top of the scroll region
-	// and the scroll region uses the full width (typical terminal scroll).
-	// This captures lines that would be lost during scroll up operations.
+	// Save lines to scrollback if we're at the top of the scroll region,
+	// the region starts at the first row of the screen, and it uses the full
+	// width (typical terminal scroll). This captures lines that would be lost
+	// during scroll up operations. A region that starts lower, such as one
+	// that keeps a status line above it, discards them, as xterm does.
 	// This happens before the lines are deleted, because a full-width delete
 	// reuses their storage as the blank lines at the bottom of the region.
-	if (s.scrollback != nil || s.scrollOff != nil) && y == scroll.Min.Y && fullWidth {
+	if (s.scrollback != nil || s.scrollOff != nil) && y == scroll.Min.Y && scroll.Min.Y == 0 && fullWidth {
 		// Save lines that will be deleted
 		for i := range min(n, scroll.Max.Y-y, s.buf.Height()-y) {
 			if line := s.buf.Line(y + i); line != nil && !s.pushScrollback(line) {
