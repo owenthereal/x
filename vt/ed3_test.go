@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -52,22 +53,94 @@ func TestED3ClearsOnlyHistory(t *testing.T) {
 // Claude Code repaints on resize with ESC[2J ESC[3J: ED 2 pushes the screen
 // into history, then ED 3 clears the history, so the transcript that follows
 // is the only one there. A consumer keeping history must see the pushes before
-// the clear, and no push after it.
+// the clear, and no push after it. It does so whatever the scrollback's size:
+// upterm sets it to 0, keeping history through these two functions alone.
 func TestED2ThenED3OrderTheirCallbacks(t *testing.T) {
-	e := NewEmulator(10, 3)
-	var events []string
-	e.SetScrollOffFunc(func(l uv.Line) { events = append(events, "off "+l.String()) })
-	e.SetScrollbackClearFunc(func() { events = append(events, "clear") })
-	e.WriteString("a\r\nb\r\nc")
+	for _, size := range []int{DefaultScrollbackSize, 0} {
+		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {
+			e := NewEmulator(10, 3)
+			e.SetScrollbackSize(size)
+			var events []string
+			e.SetScrollOffFunc(func(l uv.Line) { events = append(events, "off "+l.String()) })
+			e.SetScrollbackClearFunc(func() { events = append(events, "clear") })
+			// The "a" scrolls off with the line feed before the "d".
+			e.WriteString("a\r\nb\r\nc\r\nd")
 
-	e.WriteString("\x1b[2J\x1b[3J")
+			e.WriteString("\x1b[2J\x1b[3J")
 
-	want := []string{"off a", "off b", "off c", "clear"}
-	if !slices.Equal(events, want) {
-		t.Errorf("callbacks: got = %q, want = %q", events, want)
+			want := []string{"off a", "off b", "off c", "off d", "clear"}
+			if !slices.Equal(events, want) {
+				t.Errorf("callbacks: got = %q, want = %q", events, want)
+			}
+			if n := e.ScrollbackLen(); n != 0 {
+				t.Errorf("ScrollbackLen: got = %d, want = 0", n)
+			}
+		})
 	}
-	if n := e.ScrollbackLen(); n != 0 {
-		t.Errorf("ScrollbackLen: got = %d, want = 0", n)
+}
+
+// ED 3 touches no cell and no cursor, so a wrap pending at the right margin is
+// still pending after it, on either screen, and the next character wraps as it
+// would have without the ED 3. CursorPosition reports the last column both
+// ways, so only PendingWrap and the next print show it.
+func TestED3KeepsAPendingWrap(t *testing.T) {
+	// A step is bytes written to both emulators, and where the cursor is after.
+	type step struct {
+		seq    string
+		cursor uv.Position
+	}
+	for _, tc := range []struct {
+		name, setup string
+		steps       []step
+	}{
+		{
+			// The two line feeds at the bottom scroll "a" and "b" off.
+			name:  "main screen",
+			setup: "a\r\nb\r\nc\r\nd\r\n0123456789",
+			steps: []step{{"x", uv.Pos(1, 2)}},
+		},
+		{
+			// The main screen's wrap stays pending behind the alternate
+			// screen, and comes back with it.
+			name:  "alternate screen",
+			setup: "a\r\n0123456789\x1b[?1049h0123456789",
+			steps: []step{{"x", uv.Pos(1, 1)}, {"\x1b[?1049ly", uv.Pos(1, 2)}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			with, without := NewEmulator(10, 3), NewEmulator(10, 3)
+			for _, e := range []*Emulator{with, without} {
+				e.WriteString(tc.setup)
+				if !e.PendingWrap() {
+					t.Fatal("no wrap pending after the setup")
+				}
+			}
+			mainPending := with.MainPendingWrap()
+
+			with.WriteString("\x1b[3J")
+
+			if !with.PendingWrap() {
+				t.Error("wrap no longer pending after ED 3")
+			}
+			if got := with.MainPendingWrap(); got != mainPending {
+				t.Errorf("main screen's pending wrap after ED 3: got = %v, want = %v", got, mainPending)
+			}
+
+			for _, s := range tc.steps {
+				with.WriteString(s.seq)
+				without.WriteString(s.seq)
+
+				if got, want := screenRows(with, 10), screenRows(without, 10); !slices.Equal(got, want) {
+					t.Errorf("screen after %q: got = %q, want = %q (without the ED 3)", s.seq, got, want)
+				}
+				if got := with.CursorPosition(); got != s.cursor {
+					t.Errorf("cursor after %q: got = %v, want = %v", s.seq, got, s.cursor)
+				}
+				if got, want := with.PendingWrap(), without.PendingWrap(); got != want {
+					t.Errorf("pending wrap after %q: got = %v, want = %v", s.seq, got, want)
+				}
+			}
+		})
 	}
 }
 
