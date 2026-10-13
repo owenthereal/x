@@ -20,6 +20,8 @@ type Screen struct {
 	// scrollOff, when set, receives each line that leaves the screen into
 	// history, before it is overwritten.
 	scrollOff func(uv.Line)
+	// scrollbackClear, when set, is called when the history is cleared.
+	scrollbackClear func()
 	// meter counts the screen's work: the emulator's meter, for an
 	// emulator's screens.
 	meter *meter
@@ -234,6 +236,28 @@ func (s *Screen) pushScrollback(line uv.Line) bool {
 // reuses. A nil fn removes it.
 func (s *Screen) SetScrollOffFunc(fn func(uv.Line)) {
 	s.scrollOff = fn
+}
+
+// SetScrollbackClearFunc sets fn to be called when the history is cleared by
+// what the program writing to the terminal sends: ED 3, and RIS. It is called
+// whether or not the screen has a scrollback buffer, as the history it speaks
+// of is the one [Screen.SetScrollOffFunc] feeds, so a caller keeping its own
+// can clear it. Clearing the scrollback buffer yourself, with
+// [Screen.Scrollback] or [Emulator.ClearScrollback], does not call it. A nil
+// fn removes it.
+func (s *Screen) SetScrollbackClearFunc(fn func()) {
+	s.scrollbackClear = fn
+}
+
+// clearHistory empties the scrollback buffer, if there is one, and then calls
+// the scrollback clear function. The buffer is emptied by reslicing, which is
+// a constant amount of work whatever it holds, so the meter does not charge
+// it.
+func (s *Screen) clearHistory() {
+	s.scrollback.Clear()
+	if s.scrollbackClear != nil {
+		s.scrollbackClear()
+	}
 }
 
 // isLineEmpty reports whether the line contains only empty/space cells,
