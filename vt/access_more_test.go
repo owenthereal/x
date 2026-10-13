@@ -85,6 +85,7 @@ func TestLastCharReportsWhatREPRepeats(t *testing.T) {
 		{"RIS", "\x1bc", 0},
 		{"REP after RIS", "\x1b[b", 0},
 		{"after RIS", "w", 'w'},
+		{"DECSTR", "\x1b[!p", 'w'},
 	}
 	for _, step := range steps {
 		_, _ = e.WriteString(step.input)
@@ -135,6 +136,8 @@ func TestLastCharSurvivesASplitCluster(t *testing.T) {
 		{"cluster at the last column", 5, []string{"abcde", "\u0301", "\x1b[b"}, 'd', "abcde\u0301"},
 		{"insert mode", 10, []string{"xyz\x1b[1;1H\x1b[4hae", "\u0301", "\x1b[b"}, 'a', "ae\u0301axyz"},
 		{"an ASCII character instead of a mark", 10, []string{"ae", "b", "\x1b[b"}, 'b', "aebb"},
+		{"a rune that is not a mark", 10, []string{"ae", "\u00e9", "\x1b[b"}, 'e', "ae\u00e9e"},
+		{"a wide character instead of a mark", 10, []string{"ae", "世", "\x1b[b"}, 'e', "ae世e"},
 		{"a mark after a sequence is not joined", 10, []string{"ae", "\x1b[m", "\u0301", "\x1b[b"}, 'e', "aee"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

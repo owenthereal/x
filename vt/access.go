@@ -108,7 +108,7 @@ func (e *Emulator) TabStops() []int {
 // LastChar returns the character [ansi.REP] repeats: the last one printed
 // whose input was a single byte of width 1, taken before the character set
 // maps it, so it is always ASCII. It is 0 if none has been printed since the
-// emulator started or was reset.
+// emulator started or was last reset with RIS; DECSTR leaves it.
 func (e *Emulator) LastChar() rune {
 	return e.lastChar
 }
