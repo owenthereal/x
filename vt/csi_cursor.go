@@ -14,6 +14,11 @@ func (e *Emulator) nextTab(n int) {
 	// where a tab leaves it. A count past the columns to its right moves it
 	// no further, and would only spin there.
 	n = min(n, e.Width()-1-x)
+	// The tabs scan the columns to the right at most once between them,
+	// however few stops there are, and each takes a step of the loop.
+	if !e.meter.spend(max(e.Width()-1-x+n, 1)) {
+		return
+	}
 	for range n {
 		ts := e.tabstops.Next(x)
 		if ts < x {
@@ -47,6 +52,10 @@ func (e *Emulator) prevTab(n int) {
 	// Each tab moves the cursor at least a column, until it is in the first,
 	// where a tab leaves it: a count past the columns to its left only spins.
 	n = min(n, x)
+	// As in nextTab: one scan of the columns to the left, and the steps.
+	if !e.meter.spend(max(x+n, 1)) {
+		return
+	}
 	for range n {
 		ts := e.tabstops.Prev(x)
 		if ts > x {
@@ -116,7 +125,12 @@ func (e *Emulator) repeatPreviousCharacter(n int) {
 	if e.lastChar == 0 {
 		return
 	}
+	// REP is not clamped, so its count is unbounded work: each repetition
+	// is charged, and a stop ends the rest.
 	for range n {
+		if !e.meter.spend(1) {
+			return
+		}
 		e.handlePrint(e.lastChar)
 	}
 }

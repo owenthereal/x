@@ -90,6 +90,10 @@ type Emulator struct {
 	// mainPhantom is the main screen's atPhantom while the alternate
 	// screen is active.
 	mainPhantom bool
+
+	// meter counts the work of every operation, for the stop function. Both
+	// screens count on it.
+	meter meter
 }
 
 var _ Terminal = (*Emulator)(nil)
@@ -102,6 +106,8 @@ func NewEmulator(w, h int) *Emulator {
 	t.scr = &t.scrs[0]
 	t.scrs[0].cb = &t.cb
 	t.scrs[1].cb = &t.cb
+	t.scrs[0].meter = &t.meter
+	t.scrs[1].meter = &t.meter
 	t.parser = ansi.NewParser()
 	t.parser.SetParamsSize(parser.MaxParamsSize)
 	t.parser.SetDataSize(1024 * 1024 * 4) // 4MB data buffer
@@ -249,11 +255,22 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 // loses at the top are discarded, not moved into history. The cursors are
 // only kept on the screen, a wrap pending on either screen stays pending, and
 // the margins and origin mode are reset.
+//
+// A resize is metered like any operation: a stop inside it spends the
+// emulator, and the next Write returns [ErrStopped].
 func (e *Emulator) Resize(width int, height int) {
+	// A spent emulator holds nothing defined to resize.
+	if e.meter.spent() {
+		return
+	}
 	e.carry.valid = false
-	e.scrs[0].Resize(width, height)
+	if !e.scrs[0].resize(width, height, true) {
+		return
+	}
 	// The alternate screen has no history.
-	e.scrs[1].resize(width, height, false)
+	if !e.scrs[1].resize(width, height, false) || !e.meter.spend(max(width, 1)) {
+		return
+	}
 	e.tabstops = uv.DefaultTabStops(width)
 
 	// xterm clears origin mode with the margins, and leaves the cursor where
@@ -315,9 +332,15 @@ func (e *Emulator) Close() error {
 }
 
 // Write writes data to the terminal output buffer.
+//
+// Once the stop function set by [Emulator.SetStopFunc] returns true, Write
+// returns the bytes it consumed and [ErrStopped].
 func (e *Emulator) Write(p []byte) (n int, err error) {
 	if e.closed {
 		return 0, io.ErrClosedPipe
+	}
+	if e.meter.spent() {
+		return 0, ErrStopped
 	}
 
 	for i := range p {
@@ -326,6 +349,11 @@ func (e *Emulator) Write(p []byte) (n int, err error) {
 			e.partial = 0
 		} else {
 			e.partial++
+		}
+		// Each byte counts too, so that bytes which touch no cell, a run
+		// of cursor moves say, still reach the stop function.
+		if !e.meter.spend(1) {
+			return i + 1, ErrStopped
 		}
 	}
 	// Flush the last cluster once the whole slice is written, so a caller can
@@ -337,6 +365,9 @@ func (e *Emulator) Write(p []byte) (n int, err error) {
 	if len(e.grapheme) > 0 {
 		e.flushGrapheme()
 		e.carry = e.lastCluster
+		if e.meter.spent() {
+			return len(p), ErrStopped
+		}
 	}
 	return len(p), nil
 }
@@ -488,9 +519,12 @@ func (e *Emulator) SetIndexedColor(i int, c color.Color) {
 	e.colors[i] = c
 }
 
-// resetTabStops resets the terminal tab stops to the default set.
+// resetTabStops resets the terminal tab stops to the default set, a piece of
+// work as wide as the screen.
 func (e *Emulator) resetTabStops() {
-	e.tabstops = uv.DefaultTabStops(e.Width())
+	if e.meter.spend(max(e.Width(), 1)) {
+		e.tabstops = uv.DefaultTabStops(e.Width())
+	}
 }
 
 func (e *Emulator) logf(format string, v ...any) {

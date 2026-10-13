@@ -755,7 +755,10 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 			x, _ := e.scr.CursorPosition()
 			e.tabstops.Reset(x)
 		case 3:
-			e.tabstops.Clear()
+			// Clearing every stop is a piece of work as wide as the screen.
+			if e.meter.spend(max(e.Width(), 1)) {
+				e.tabstops.Clear()
+			}
 		default:
 			return false
 		}

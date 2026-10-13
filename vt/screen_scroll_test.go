@@ -280,14 +280,30 @@ func TestFullWidthScrollsRotateTheRows(t *testing.T) {
 }
 
 // BenchmarkLineFeedAtTheBottom scrolls a 200x60 screen by a line of text and
-// a line feed at the bottom margin, 10,000 times per iteration.
+// a line feed at the bottom margin, 10,000 times per iteration: with the
+// default scrollback, and with none but a scroll-off function, which leaves
+// the screen's own work.
 func BenchmarkLineFeedAtTheBottom(b *testing.B) {
-	term := NewEmulator(200, 60)
-	term.WriteString("\x1b[60;1H")
 	feeds := bytes.Repeat([]byte(strings.Repeat("abcdefgh", 12)+"\r\n"), 10000)
-	b.SetBytes(int64(len(feeds)))
-	b.ReportAllocs()
-	for b.Loop() {
-		term.Write(feeds)
+	for _, bc := range []struct {
+		name  string
+		setup func(*Emulator)
+	}{
+		{"scrollback", func(*Emulator) {}},
+		{"scroll-off", func(e *Emulator) {
+			e.SetScrollbackSize(0)
+			e.SetScrollOffFunc(func(uv.Line) {})
+		}},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			term := NewEmulator(200, 60)
+			bc.setup(term)
+			term.WriteString("\x1b[60;1H")
+			b.SetBytes(int64(len(feeds)))
+			b.ReportAllocs()
+			for b.Loop() {
+				term.Write(feeds)
+			}
+		})
 	}
 }

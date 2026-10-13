@@ -117,8 +117,13 @@ func (e *Emulator) resumeCluster(r rune) {
 	}
 	if e.insertMode {
 		// Undo the insert that made room for it.
-		e.scr.buf.DeleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), e.scr.scroll)
+		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), e.scr.scroll) {
+			return
+		}
 	} else {
+		if !e.meter.spend(c.width) {
+			return
+		}
 		for i := range c.width {
 			e.scr.SetCell(c.x+i, c.y, nil)
 		}
@@ -137,6 +142,10 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// terminal with nothing to attach it to does.
 		return
 	}
+	// The cells the print writes.
+	if !e.meter.spend(width) {
+		return
+	}
 	awm := e.isModeSet(ansi.ModeAutoWrap)
 	cell := uv.Cell{
 		Content: content,
@@ -151,6 +160,9 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// respects [ansi.LNM] mode.
 		// This will reset the phantom state i.e. pending wrap state.
 		e.index()
+		if e.meter.spent() {
+			return
+		}
 		_, y = e.scr.CursorPosition()
 		x = 0
 	}
@@ -187,7 +199,9 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 
 	if e.insertMode {
 		// IRM: shift the rest of the line right to make room.
-		e.scr.buf.InsertCellArea(x, y, cell.Width, e.scr.blankCell(), e.scr.scroll)
+		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), e.scr.scroll) {
+			return
+		}
 	}
 	e.scr.SetCell(x, y, &cell)
 	cx, cy := x, y
