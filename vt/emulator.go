@@ -244,14 +244,15 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 	return e.scr.cur.Style, !e.scr.cur.Steady
 }
 
-// Resize resizes the terminal, following xterm's ScreenResize. The main
-// screen keeps its cursor's row (see [Screen.Resize]) and the alternate one
-// drops rows from the bottom. The cursors are only kept on the screen, a wrap
-// pending on either screen stays pending, and the margins and origin mode are
-// reset.
+// Resize resizes the terminal, following xterm's ScreenResize. Each screen
+// keeps its cursor's row (see [Screen.Resize]); the rows the alternate screen
+// loses at the top are discarded, not moved into history. The cursors are
+// only kept on the screen, a wrap pending on either screen stays pending, and
+// the margins and origin mode are reset.
 func (e *Emulator) Resize(width int, height int) {
 	e.carry.valid = false
 	e.scrs[0].Resize(width, height)
+	// The alternate screen has no history.
 	e.scrs[1].resize(width, height, false)
 	e.tabstops = uv.DefaultTabStops(width)
 

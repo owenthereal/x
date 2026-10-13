@@ -77,23 +77,38 @@ func TestHeightShrinkFeedsTheScrollOffFunction(t *testing.T) {
 	}
 }
 
-// The alternate screen has no history: a height shrink drops its bottom rows
-// and clamps its cursor.
-func TestAltScreenHeightShrinkDropsBottomRows(t *testing.T) {
-	e := NewEmulator(10, 6)
-	var off []string
-	e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
-	e.WriteString("\x1b[?1049h" + sixRows)
-	e.Resize(10, 3)
+// The alternate screen keeps its cursor's row through a height shrink too,
+// as xterm's Reallocate does for whichever buffer shows with its default
+// SouthWest gravity, and as tmux's screen_resize_y does for a grid without
+// history: the rows below the cursor go first, then rows from the top. Those
+// are discarded, since the alternate screen has no history.
+func TestAltScreenHeightShrinkKeepsTheCursorLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, rows string
+		screen     []string
+		cursor     uv.Position
+	}{
+		{"cursor on the last row", sixRows, []string{"r3", "r4", "r5"}, uv.Pos(2, 2)},
+		{"blank rows below the cursor", "r0\r\nr1", []string{"r0", "r1", ""}, uv.Pos(2, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(10, 6)
+			var off []string
+			e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
+			e.WriteString("\x1b[?1049h" + tc.rows)
+			e.Resize(10, 3)
 
-	if got, want := screenRows(e, 10), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
-		t.Errorf("alternate screen: got = %q, want = %q", got, want)
-	}
-	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
-		t.Errorf("cursor: got = %v, want = %v, clamped", got, want)
-	}
-	if n := e.ScrollbackLen(); n != 0 || len(off) != 0 {
-		t.Errorf("history: got = %q and scroll-off %q, want none", lineTexts(e.Scrollback().Lines()), off)
+			if got := screenRows(e, 10); !slices.Equal(got, tc.screen) {
+				t.Errorf("alternate screen: got = %q, want = %q", got, tc.screen)
+			}
+			if got := e.CursorPosition(); got != tc.cursor {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.cursor)
+			}
+			if e.ScrollbackLen() != 0 || e.AltScreen().Scrollback().Len() != 0 || len(off) != 0 {
+				t.Errorf("history: got = %q, alternate %q, scroll-off %q, want none",
+					lineTexts(e.Scrollback().Lines()), lineTexts(e.AltScreen().Scrollback().Lines()), off)
+			}
+		})
 	}
 }
 

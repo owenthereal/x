@@ -84,15 +84,15 @@ func (s *Screen) Resize(width int, height int) {
 	s.resize(width, height, true)
 }
 
-// resize resizes the screen. Unless keepCursorRow is set, a height shrink
-// drops rows from the bottom, as the alternate screen does, having no history
-// to push its top rows into.
-func (s *Screen) resize(width, height int, keepCursorRow bool) {
+// resize resizes the screen. Unless history is set, the rows a height shrink
+// takes from the top are discarded, not moved into history, as on the
+// alternate screen, which has none.
+func (s *Screen) resize(width, height int, history bool) {
 	if s.buf == nil {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
 		if width != s.buf.Width() || height != s.buf.Height() {
-			s.reallocate(width, height, keepCursorRow)
+			s.reallocate(width, height, history)
 		}
 		s.buf.Touched = nil
 	}
@@ -112,17 +112,16 @@ func (s *Screen) resize(width, height int, keepCursorRow bool) {
 // briefly need over four billion cells, and it shrinks by reslicing, which
 // keeps the old storage.
 //
-// With keepCursorRow set, the rows above the cursor that no longer fit go
-// into history first, so the cursor's row becomes the last one, where the
-// clamp in resize puts the cursor.
-func (s *Screen) reallocate(width, height int, keepCursorRow bool) {
-	top := 0
-	if keepCursorRow {
-		top = max(s.cur.Y-(height-1), 0)
-	}
+// The rows above the cursor that no longer fit go first, into history if
+// history is set, so the cursor's row becomes the last one, where the clamp
+// in resize puts the cursor.
+func (s *Screen) reallocate(width, height int, history bool) {
+	top := max(s.cur.Y-(height-1), 0)
 	old := s.buf.Lines
-	for _, line := range old[:top] {
-		s.pushScrollback(line)
+	if history {
+		for _, line := range old[:top] {
+			s.pushScrollback(line)
+		}
 	}
 	lines := make([]uv.Line, height)
 	for y := range lines {
