@@ -201,6 +201,39 @@ func TestClampsAreExact(t *testing.T) {
 	}
 }
 
+// A huge CHT ends in the last column and a huge CBT in the first, from every
+// column, with the default tab stops and with a stop in every column. These
+// are absolute positions: a clamp a column short of the columns to travel
+// stops a column away from the edge, which TestClampsAreExact cannot see
+// because its cursors are further from it than that.
+func TestTabClampsReachTheEdge(t *testing.T) {
+	const w, h = 80, 24
+
+	everyColumn := "\x1b[3g"
+	for x := 1; x <= w; x++ {
+		everyColumn += fmt.Sprintf("\x1b[1;%dH\x1bH", x)
+	}
+
+	for _, layout := range []struct{ name, prep string }{
+		{"default stops", ""},
+		{"a stop in every column", everyColumn},
+	} {
+		for _, op := range []struct {
+			name, final string
+			want        int
+		}{{"CHT", "I", w - 1}, {"CBT", "Z", 0}} {
+			for x := range w {
+				e := newTestTerminal(t, w, h)
+				_, _ = e.WriteString(layout.prep)
+				_, _ = e.WriteString(fmt.Sprintf("\x1b[1;%dH\x1b[%d%s", x+1, hugeCount, op.final))
+				if got, want := e.CursorPosition(), uv.Pos(op.want, 0); got != want {
+					t.Errorf("%s: %s from column %d: got = %v, want = %v", layout.name, op.name, x, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestREPKeepsItsMeaning(t *testing.T) {
 	e := newTestTerminal(t, 80, 24)
 	_, _ = e.WriteString("x\x1b[160b")
