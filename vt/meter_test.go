@@ -392,6 +392,111 @@ func TestAStoppedEmulatorIsSpent(t *testing.T) {
 	}
 }
 
+// Bytes that touch no cell still count: a run of CUF, twice the interval long,
+// reaches the stop function, which stops it part way.
+func TestStopFuncStopsBetweenParsedBytes(t *testing.T) {
+	e := NewEmulator(80, 24)
+	e.SetStopFunc(func() bool { return true })
+	in := strings.Repeat("\x1b[C", 2*meterInterval/3)
+	n, err := e.WriteString(in)
+	if !errors.Is(err, ErrStopped) || n >= len(in) {
+		t.Errorf("Write: got (%d, %v), want part of the %d bytes and ErrStopped", n, err, len(in))
+	}
+}
+
+// A scroll at the bottom of a full-width region moves every row of it, and
+// marks each touched, so it is charged at least twice the region's height:
+// the stop function's first call comes before a tall screen has scrolled an
+// interval's worth of rows. A line handed to history is charged its width,
+// and the row blanked as much again, so on a wide screen the first call comes
+// before an interval's worth of cells has gone either way.
+func TestStopFuncCountsTheRowsAScrollMoves(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w, h int
+		// The least a line feed at the bottom is charged.
+		least int
+	}{
+		{"tall and narrow: the rows moved and touched", 1, 4096, 2 * 4096},
+		{"wide and short: the line to history and the row blanked", 4096, 2, 2 * 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(tc.w, tc.h)
+			scrolled := 0
+			e.SetScrollOffFunc(func(uv.Line) { scrolled++ })
+			e.WriteString(fmt.Sprintf("\x1b[%d;1H", tc.h))
+			e.SetStopFunc(func() bool { return true })
+			_, err := e.WriteString(strings.Repeat("\n", 2*meterInterval))
+			if !errors.Is(err, ErrStopped) {
+				t.Fatalf("Write: got error %v, want ErrStopped", err)
+			}
+			// The last line scrolled off may be the one whose scroll the
+			// call came in; the ones before it were charged in full.
+			if done := scrolled - 1; done*tc.least > meterInterval {
+				t.Errorf("%d lines scrolled off before the first call, each charged at least %d: more than the interval of %d", done, tc.least, meterInterval)
+			}
+		})
+	}
+}
+
+// ultraviolet's SetCell, writing over a wide character's placeholder, scans
+// back toward column 0 for the character it belongs to, and finds none once
+// that character is gone. Its DeleteCellArea's order of moves, which DCH
+// keeps, leaves such orphans at every other column and then writes over
+// them, so one DCH at column 0 of a row of wide characters is quadratic in
+// the width; so are a fill and prints over orphans. Each such SetCell is
+// charged its scan: the stop function still comes throughout, with no more
+// than the interval and a row's width charged, and no more than 50 ms passed,
+// between two calls.
+func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
+	const w = 32768
+	wide := strings.Repeat("日", w/2)
+	// Every other cell a zero-width placeholder with no wide character
+	// before it.
+	orphans := func(e *Emulator) {
+		for x := 1; x < w; x += 2 {
+			e.SetCell(x, 0, &uv.Cell{})
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		prep func(*Emulator)
+		op   string
+	}{
+		{"DCH at column 0 of a row of wide characters", func(e *Emulator) { e.WriteString(wide) }, "\x1b[1;1H\x1b[P"},
+		{"EL over orphaned placeholders", orphans, "\x1b[1;1H\x1b[2K"},
+		// A count of the whole row moves nothing and blanks every cell.
+		{"ICH over orphaned placeholders", orphans, "\x1b[1;1H\x1b[32768@"},
+		{"prints over orphaned placeholders", orphans, "\x1b[1;1Hx\x1b[32766b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(w, 1)
+			tc.prep(e)
+			var longest time.Duration
+			calls := 0
+			last := time.Now()
+			e.SetStopFunc(func() bool {
+				now := time.Now()
+				longest = max(longest, now.Sub(last))
+				last = now
+				calls++
+				if e.meter.last > meterInterval+w {
+					t.Errorf("%d cell operations charged between two calls, more than the interval of %d and a row of %d", e.meter.last, meterInterval, w)
+				}
+				return false
+			})
+			if _, err := e.WriteString(tc.op); err != nil {
+				t.Fatalf("Write: got error %v", err)
+			}
+			longest = max(longest, time.Since(last))
+			t.Logf("%d calls to the stop function, at most %v apart", calls, longest)
+			if longest > 50*time.Millisecond {
+				t.Errorf("%v between two calls to the stop function: the scans went uncharged", longest)
+			}
+		})
+	}
+}
+
 // A resize counts each row it copies: growing 64x64 to 128x128 builds 128 rows
 // of 128 cells, so with an interval of 1,024 the stop function is called at
 // least 16 times inside it, with no more than the interval between two calls.

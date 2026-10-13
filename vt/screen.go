@@ -153,9 +153,11 @@ func (s *Screen) reallocate(width, height int, history bool) bool {
 		// What uv.NewLine and a copy of the old row do: the old cells that
 		// fit, then blank ones.
 		if !s.meter.spans(0, width, func(lo, hi int) {
-			n := copy(line[lo:hi], src[min(lo, len(src)):min(hi, len(src))])
-			for x := lo + n; x < hi; x++ {
-				line[x] = uv.EmptyCell
+			span := line[lo:hi]
+			n := copy(span, src[min(lo, len(src)):min(hi, len(src))])
+			rest := span[n:]
+			for x := range rest {
+				rest[x] = uv.EmptyCell
 			}
 		}) {
 			return false
@@ -267,13 +269,15 @@ func (s *Screen) FillArea(c *uv.Cell, area uv.Rectangle) {
 }
 
 // fillArea fills area with c, or clears it if c is nil, and marks it touched,
-// as [uv.Buffer.FillArea] and a touch of each of its rows do. It fills a
-// metered span of a row at a time, until the meter stops it.
+// as [uv.Buffer.FillArea] and a touch of each of its rows do: SetCell on every
+// c's width of cells from the area's left edge. It fills a metered span of a
+// row at a time, charging each SetCell's scan from a placeholder too, until
+// the meter stops it.
 //
 // SetCell ignores a cell off the screen, so only the rows on it, and the
 // columns left of its right edge, need a visit. The spans start where the
 // area does and are a whole number of c's width, so a wide c lands where it
-// would in one call.
+// would in one pass.
 func (s *Screen) fillArea(c *uv.Cell, area uv.Rectangle) {
 	step := 1
 	if c != nil && c.Width > 1 {
@@ -290,7 +294,14 @@ func (s *Screen) fillArea(c *uv.Cell, area uv.Rectangle) {
 			if !s.meter.spend(hi - lo) {
 				return
 			}
-			s.buf.FillArea(c, uv.Rect(lo, y, hi-lo, 1))
+			for x := lo; x < hi; x += step {
+				// chargeScan, spelled out so that it inlines in a loop
+				// every erase runs.
+				if n := s.scanCost(x, y); n > 0 && !s.meter.spend(n) {
+					return
+				}
+				s.buf.Buffer.SetCell(x, y, c)
+			}
 		}
 		s.buf.TouchLine(area.Min.X, y, area.Dx())
 	}
@@ -302,8 +313,9 @@ func (s *Screen) fillArea(c *uv.Cell, area uv.Rectangle) {
 func (s *Screen) clearCells() {
 	for _, line := range s.buf.Lines {
 		if !s.meter.spans(0, len(line), func(lo, hi int) {
-			for x := lo; x < hi; x++ {
-				line[x] = uv.EmptyCell
+			span := line[lo:hi]
+			for x := range span {
+				span[x] = uv.EmptyCell
 			}
 		}) {
 			return
@@ -522,11 +534,15 @@ func (s *Screen) insertCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool
 // cells opened at the area's right edge to c, as
 // [uv.RenderBuffer.DeleteCellArea] does: each cell moves through SetCell, a
 // metered span at a time. It reports false if the meter stopped it.
+//
+// That order of moves leaves an orphaned placeholder at every other column of
+// a row of wide characters, which the next move's SetCell scans back from:
+// the charges for those scans keep the stop function coming.
 func (s *Screen) deleteCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool {
 	if s.inCellArea(x, y, n, area) {
 		m := min(n, area.Max.X-x)
 		if !s.meter.spans(x, area.Max.X-m, func(lo, hi int) {
-			for i := lo; i < hi; i++ {
+			for i := lo; i < hi && s.chargeScan(i, y); i++ {
 				s.buf.Buffer.SetCell(i, y, s.buf.CellAt(i+m, y))
 			}
 		}) {
@@ -556,10 +572,30 @@ func (s *Screen) inCellArea(x, y, n int, area uv.Rectangle) bool {
 // reports false if the meter stopped it.
 func (s *Screen) setCells(from, to, y int, c *uv.Cell) bool {
 	return s.meter.spans(from, to, func(lo, hi int) {
-		for x := lo; x < hi; x++ {
+		for x := lo; x < hi && s.chargeScan(x, y); x++ {
 			s.buf.Buffer.SetCell(x, y, c)
 		}
 	})
+}
+
+// chargeScan charges, before ultraviolet's SetCell writes over the cell at x
+// on row y, the scan it makes when that cell is a wide character's
+// placeholder (see scanCost). A span charges the cell itself. It reports
+// false if the meter stopped it.
+func (s *Screen) chargeScan(x, y int) bool {
+	n := s.scanCost(x, y)
+	return n == 0 || s.meter.spend(n)
+}
+
+// scanCost returns the most ultraviolet's SetCell reads before it writes over
+// the cell at x on row y: when that cell is a wide character's placeholder,
+// it scans back toward column 0 for the character the placeholder belongs to,
+// as far as column 0 when the character is gone, x+1 cells; otherwise none.
+func (s *Screen) scanCost(x, y int) int {
+	if cell := s.buf.CellAt(x, y); cell != nil && cell.Width == 0 {
+		return x + 1
+	}
+	return 0
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
@@ -768,8 +804,11 @@ func (s *Screen) blankRows(rows []uv.Line) bool {
 	}
 	for _, row := range rows {
 		if !s.meter.spans(0, len(row), func(lo, hi int) {
-			for x := lo; x < hi; x++ {
-				row[x] = blank
+			// Ranging over the span, not indexing up to hi, keeps the
+			// bounds checks out of a loop every scroll runs.
+			span := row[lo:hi]
+			for x := range span {
+				span[x] = blank
 			}
 		}) {
 			return false

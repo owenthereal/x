@@ -343,17 +343,25 @@ func (e *Emulator) Write(p []byte) (n int, err error) {
 		return 0, ErrStopped
 	}
 
-	for i := range p {
-		e.parser.Advance(p[i])
-		if e.parser.State() == parser.GroundState {
-			e.partial = 0
-		} else {
-			e.partial++
-		}
+	for i := 0; i < len(p); {
 		// Each byte counts too, so that bytes which touch no cell, a run
-		// of cursor moves say, still reach the stop function.
-		if !e.meter.spend(1) {
-			return i + 1, ErrStopped
+		// of cursor moves say, still reach the stop function. They are
+		// charged a short run at a time, before they are parsed, which
+		// leaves each byte only the check for a stop.
+		run := min(len(p)-i, byteRun, meterInterval)
+		if !e.meter.spend(run) {
+			return i, ErrStopped
+		}
+		for end := i + run; i < end; i++ {
+			e.parser.Advance(p[i])
+			if e.parser.State() == parser.GroundState {
+				e.partial = 0
+			} else {
+				e.partial++
+			}
+			if e.meter.spent() {
+				return i + 1, ErrStopped
+			}
 		}
 	}
 	// Flush the last cluster once the whole slice is written, so a caller can

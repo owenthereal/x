@@ -125,6 +125,9 @@ func (e *Emulator) resumeCluster(r rune) {
 			return
 		}
 		for i := range c.width {
+			if !e.scr.chargeScan(c.x+i, c.y) {
+				return
+			}
 			e.scr.SetCell(c.x+i, c.y, nil)
 		}
 	}
@@ -140,10 +143,6 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// combining mark after a control. Stored, it would be a zero-width
 		// cell, which reads as the tail of a wide character; drop it, as a
 		// terminal with nothing to attach it to does.
-		return
-	}
-	// The cells the print writes.
-	if !e.meter.spend(width) {
 		return
 	}
 	awm := e.isModeSet(ansi.ModeAutoWrap)
@@ -202,6 +201,12 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), e.scr.scroll) {
 			return
 		}
+	}
+	// The cells the print writes, charged once the wrap and the insert have
+	// charged their own work, with SetCell's scan back from a placeholder it
+	// writes over.
+	if !e.meter.spend(cell.Width + e.scr.scanCost(x, y)) {
+		return
 	}
 	e.scr.SetCell(x, y, &cell)
 	cx, cy := x, y
