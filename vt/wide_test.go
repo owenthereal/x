@@ -188,3 +188,27 @@ func TestAClusterWideningAtTheLastColumnEndsAsInOneWrite(t *testing.T) {
 		}
 	})
 }
+
+// A Write that ends in a mark with no base still carries the cluster printed
+// before the mark, across whatever came between. Where an erase came between,
+// the cell no longer holds the cluster, and what the cluster wrote over at the
+// last column is gone with it: the undo mustn't put it back. Either way the
+// screen ends as it does in one Write, where the mark and VS16 have no base
+// and are dropped.
+func TestTheCarriedUndoKeepsAnEraseAtTheLastColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first string
+		want  wideState
+	}{
+		{"ECH", "\x1b[?7labcdX\x1b[1;5H\u2764\x1b[1;5H\x1b[X\u0301", wideState{[]string{"abcd", ""}, uv.Pos(4, 0), false}},
+		{"EL 1", "\x1b[?7labcdX\x1b[1;5H\u2764\x1b[1;5H\x1b[1K\u0301", wideState{[]string{"", ""}, uv.Pos(4, 0), false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, whole := writeWide(5, 2, tc.first+"\ufe0f")
+			whole.check(t, tc.want)
+			_, split := writeWide(5, 2, tc.first, "\ufe0f")
+			split.check(t, tc.want)
+		})
+	}
+}

@@ -122,9 +122,11 @@ func (e *Emulator) resumeCluster(r rune) {
 		return
 	}
 	switch {
-	case len(c.under) > 0:
+	case len(c.under) > 0 && e.scr.holds(c.x, c.y, c.content, c.width):
 		// Put back what the cluster wrote over at the last column. An
-		// insert there only sets the cell, so this undoes one too.
+		// insert there only sets the cell, so this undoes one too. If the
+		// cell no longer holds the cluster, what it wrote over has gone
+		// with it, and the cell is blanked as anywhere else.
 		if !e.meter.spend(len(c.under)) {
 			return
 		}

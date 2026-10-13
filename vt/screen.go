@@ -611,6 +611,13 @@ func (s *Screen) cellsAt(x, y int, dst []uv.Cell) int {
 	return copy(dst, s.buf.Lines[y][x:])
 }
 
+// holds reports whether the cell at x on row y holds content, width columns
+// wide.
+func (s *Screen) holds(x, y int, content string, width int) bool {
+	c := s.buf.CellAt(x, y)
+	return c != nil && c.Width == width && c.Content == content
+}
+
 // putCells writes cells that cellsAt copied back over row y from column x as
 // they were, a wide character's placeholder included, which SetCell would
 // mend. Cells that no longer fit the row are not written.
