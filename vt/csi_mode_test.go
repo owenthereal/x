@@ -130,7 +130,8 @@ func TestAltScreenKeepsEachScreensPendingWrap(t *testing.T) {
 
 // TestMainPendingWrapWhileOnTheAltScreen pins that MainPendingWrap reports
 // the wrap kept for the main screen while the alternate one is active, and
-// none once a resize has moved the main cursor off the last column.
+// that a resize keeps it, even one that leaves the main cursor off the last
+// column, as xterm's ScreenResize leaves do_wrap alone.
 func TestMainPendingWrapWhileOnTheAltScreen(t *testing.T) {
 	e := NewEmulator(10, 4)
 	if _, err := e.WriteString(strings.Repeat("x", 10) + "\x1b[?1049h"); err != nil {
@@ -140,13 +141,13 @@ func TestMainPendingWrapWhileOnTheAltScreen(t *testing.T) {
 		t.Errorf("on the alternate screen: got = PendingWrap %v MainPendingWrap %v, want = false true", e.PendingWrap(), e.MainPendingWrap())
 	}
 	e.Resize(20, 4)
-	if e.MainPendingWrap() {
-		t.Error("MainPendingWrap: got = true after a resize moved the main cursor off the last column")
+	if !e.MainPendingWrap() {
+		t.Error("MainPendingWrap: got = false after a resize, want = true")
 	}
 	if _, err := e.WriteString("\x1b[?1049l"); err != nil {
 		t.Fatal(err)
 	}
-	if e.PendingWrap() {
-		t.Error("PendingWrap: got = true back on a main screen whose cursor is not on the last column")
+	if !e.PendingWrap() {
+		t.Error("PendingWrap: got = false back on the main screen after a resize, want = true")
 	}
 }

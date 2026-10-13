@@ -51,13 +51,7 @@ func (e *Emulator) MainPendingWrap() bool {
 	if e.scr == &e.scrs[0] {
 		return e.atPhantom
 	}
-	return e.keptMainPhantom()
-}
-
-// keptMainPhantom is the pending wrap kept for the main screen while the
-// alternate screen is active, if its cursor is still on the last column.
-func (e *Emulator) keptMainPhantom() bool {
-	return e.mainPhantom && e.scrs[0].cur.X >= e.scrs[0].Width()-1
+	return e.mainPhantom
 }
 
 // AtBoundary reports whether the bytes written so far end between sequences:

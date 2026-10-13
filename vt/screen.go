@@ -75,20 +75,63 @@ func (s *Screen) Height() int {
 	return s.buf.Height()
 }
 
-// Resize resizes the screen.
+// Resize resizes the screen. A height shrink keeps the cursor's row, as xterm
+// and tmux do: it drops the rows below the cursor first, then moves rows from
+// the top into history, through the scrollback and the scroll-off function,
+// until the cursor's row is the last. A width change truncates each row or
+// pads it with blank cells.
 func (s *Screen) Resize(width int, height int) {
+	s.resize(width, height, true)
+}
+
+// resize resizes the screen. Unless keepCursorRow is set, a height shrink
+// drops rows from the bottom, as the alternate screen does, having no history
+// to push its top rows into.
+func (s *Screen) resize(width, height int, keepCursorRow bool) {
 	if s.buf == nil {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
-		s.buf.Resize(width, height)
+		if width != s.buf.Width() || height != s.buf.Height() {
+			s.reallocate(width, height, keepCursorRow)
+		}
 		s.buf.Touched = nil
 	}
 	s.scroll = s.buf.Bounds()
 	// The cursor and the DECSC slot stay inside the new size, whether or not
 	// this is the active screen: a cursor off the screen drops what is
-	// printed at it.
+	// printed at it. The slot is only clamped, not moved with its row: xterm
+	// moves it only by the rows a growth pulls back from history, and a
+	// growth here pulls none back.
 	s.cur.Position = clampToScreen(s.cur.Position, width, height)
 	s.saved.Position = clampToScreen(s.saved.Position, width, height)
+}
+
+// reallocate copies the rows that survive a resize into a buffer of exactly
+// the new size, and drops the old one. ultraviolet's Buffer.Resize widens
+// every row before it cuts the height, so going from 2x65535 to 65535x2 would
+// briefly need over four billion cells, and it shrinks by reslicing, which
+// keeps the old storage.
+//
+// With keepCursorRow set, the rows above the cursor that no longer fit go
+// into history first, so the cursor's row becomes the last one, where the
+// clamp in resize puts the cursor.
+func (s *Screen) reallocate(width, height int, keepCursorRow bool) {
+	top := 0
+	if keepCursorRow {
+		top = max(s.cur.Y-(height-1), 0)
+	}
+	old := s.buf.Lines
+	for _, line := range old[:top] {
+		s.pushScrollback(line)
+	}
+	lines := make([]uv.Line, height)
+	for y := range lines {
+		lines[y] = uv.NewLine(width)
+		if top+y < len(old) {
+			copy(lines[y], old[top+y])
+		}
+	}
+	s.buf.Lines = lines
 }
 
 // clampToScreen returns p moved inside a width by height screen.
