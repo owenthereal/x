@@ -114,9 +114,13 @@ func (s *Screen) resize(width, height int, history bool) {
 //
 // The rows above the cursor that no longer fit go first, into history if
 // history is set, so the cursor's row becomes the last one, where the clamp
-// in resize puts the cursor.
+// in resize puts the cursor. A screen with no rows or no columns, before or
+// after, has no cursor row to keep.
 func (s *Screen) reallocate(width, height int, history bool) {
-	top := max(s.cur.Y-(height-1), 0)
+	top := 0
+	if width > 0 && height > 0 && s.buf.Width() > 0 {
+		top = max(s.cur.Y-(height-1), 0)
+	}
 	old := s.buf.Lines
 	if history {
 		for _, line := range old[:top] {

@@ -25,23 +25,36 @@ func lineTexts(lines []uv.Line) []string {
 	return texts
 }
 
+// aroundTheResize runs a resize on the main screen, and on the main screen
+// kept behind the alternate one by a ?1049 trip around it.
+var aroundTheResize = []struct{ name, before, after string }{
+	{"main screen", "", ""},
+	{"behind ?1049", "\x1b[?1049h", "\x1b[?1049l"},
+}
+
 // A height shrink with the cursor on the last row moves rows from the top
 // into history until the cursor's row is the last, so the cursor keeps its
 // row's content, as xterm's ScreenResize does with its default SouthWest
-// gravity (screen.c, saveEditBufLines before Reallocate).
+// gravity (screen.c, saveEditBufLines before Reallocate). The main screen
+// does so behind the alternate one too, by its own cursor.
 func TestHeightShrinkPushesTopRowsIntoHistory(t *testing.T) {
-	e := NewEmulator(10, 6)
-	e.WriteString(sixRows)
-	e.Resize(10, 3)
+	for _, tc := range aroundTheResize {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(10, 6)
+			e.WriteString(sixRows + tc.before)
+			e.Resize(10, 3)
+			e.WriteString(tc.after)
 
-	if got, want := lineTexts(e.Scrollback().Lines()), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
-		t.Errorf("history: got = %q, want = %q", got, want)
-	}
-	if got, want := screenRows(e, 10), []string{"r3", "r4", "r5"}; !slices.Equal(got, want) {
-		t.Errorf("screen: got = %q, want = %q", got, want)
-	}
-	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
-		t.Errorf("cursor: got = %v, want = %v, after r5", got, want)
+			if got, want := lineTexts(e.Scrollback().Lines()), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
+				t.Errorf("history: got = %q, want = %q", got, want)
+			}
+			if got, want := screenRows(e, 10), []string{"r3", "r4", "r5"}; !slices.Equal(got, want) {
+				t.Errorf("screen: got = %q, want = %q", got, want)
+			}
+			if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
+				t.Errorf("cursor: got = %v, want = %v, after r5", got, want)
+			}
+		})
 	}
 }
 
@@ -64,16 +77,43 @@ func TestHeightShrinkDropsBlankRowsBelowTheCursorFirst(t *testing.T) {
 }
 
 // The rows a height shrink moves into history reach the scroll-off function,
-// as rows scrolled off the top do.
+// as rows scrolled off the top do, behind the alternate screen too.
 func TestHeightShrinkFeedsTheScrollOffFunction(t *testing.T) {
+	for _, tc := range aroundTheResize {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(10, 6)
+			var off []string
+			e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
+			e.WriteString(sixRows + tc.before)
+			e.Resize(10, 3)
+
+			if want := []string{"r0", "r1", "r2"}; !slices.Equal(off, want) {
+				t.Errorf("scroll-off function: got = %q, want = %q", off, want)
+			}
+		})
+	}
+}
+
+// A height shrink drops the rows below the cursor whatever they hold, and
+// they never reach history: only the rows above the cursor move, as in
+// xterm's ScreenResize and Reallocate (screen.c), which save and move up
+// only the rows the cursor's row needs and cut the rest from the bottom, and
+// tmux's screen_resize_y, which deletes the lines below the cursor first.
+func TestHeightShrinkDropsRowsBelowTheCursorWhateverTheyHold(t *testing.T) {
 	e := NewEmulator(10, 6)
 	var off []string
 	e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
-	e.WriteString(sixRows)
+	e.WriteString(sixRows + "\x1b[3;3H")
 	e.Resize(10, 3)
 
-	if want := []string{"r0", "r1", "r2"}; !slices.Equal(off, want) {
-		t.Errorf("scroll-off function: got = %q, want = %q", off, want)
+	if got, want := screenRows(e, 10), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
+		t.Errorf("screen: got = %q, want = %q", got, want)
+	}
+	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
+		t.Errorf("cursor: got = %v, want = %v", got, want)
+	}
+	if e.ScrollbackLen() != 0 || len(off) != 0 {
+		t.Errorf("history: got = %q and scroll-off %q, want none", lineTexts(e.Scrollback().Lines()), off)
 	}
 }
 
@@ -153,10 +193,7 @@ func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 // main screen kept behind the alternate one: xterm's ScreenResize does not
 // touch do_wrap.
 func TestResizeKeepsThePendingWrap(t *testing.T) {
-	for _, tc := range []struct{ name, before, after string }{
-		{"main screen", "", ""},
-		{"behind ?1049", "\x1b[?1049h", "\x1b[?1049l"},
-	} {
+	for _, tc := range aroundTheResize {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(10, 2)
 			e.WriteString(strings.Repeat("x", 10) + tc.before)
@@ -176,10 +213,7 @@ func TestResizeKeepsThePendingWrap(t *testing.T) {
 // to the next row, as in xterm, whose wrap does not depend on the column.
 // A ?1049 trip around the resize changes nothing.
 func TestWideningResizeKeepsThePendingWrap(t *testing.T) {
-	for _, tc := range []struct{ name, before, after string }{
-		{"main screen", "", ""},
-		{"behind ?1049", "\x1b[?1049h", "\x1b[?1049l"},
-	} {
+	for _, tc := range aroundTheResize {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(10, 2)
 			e.WriteString(strings.Repeat("x", 10) + tc.before)
@@ -263,27 +297,37 @@ func TestAShrinkKeepsNoOldCapacity(t *testing.T) {
 	}
 }
 
+// crossedAspectResize resizes a new 2 x n emulator to n x 2. It returns the
+// emulator, the bytes the resize allocated, and the most it may: two screens
+// of 2 rows of n cells with a cell to spare per row (2 x 131,072 cells at
+// n = 65535), and 1 MiB.
+func crossedAspectResize(n int) (e *Emulator, allocated, limit uint64) {
+	e = NewEmulator(2, n)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	e.Resize(n, 2)
+	runtime.ReadMemStats(&after)
+	cellSize := uint64(reflect.TypeFor[uv.Cell]().Size())
+	return e, after.TotalAlloc - before.TotalAlloc, 2*2*uint64(n+1)*cellSize + 1<<20
+}
+
 // A resize from 2 columns by 65535 rows to 65535 by 2, valid at both ends,
 // allocates the final geometry once: two screens of 131,070 cells.
 // ultraviolet's Buffer.Resize widened every row before it cut the height,
-// which needs about four billion cells. The 2x1024 case runs first and a
-// failure there stops the test, so a regression shows at a size that fits
-// in memory before the large one can run.
+// which needs about four billion cells. So the large subtest first measures
+// the 2x1024 resize and stops if that is over its limit: a regression fails
+// at a size that fits in memory, whichever subtests -run selects.
 func TestACrossedAspectResizeAllocatesTheFinalGeometryOnce(t *testing.T) {
-	cellSize := int(reflect.TypeFor[uv.Cell]().Size())
-	for _, n := range []int{1024, 65535} {
-		ok := t.Run(fmt.Sprintf("2x%d", n), func(t *testing.T) {
-			e := NewEmulator(2, n)
-
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			e.Resize(n, 2)
-			runtime.ReadMemStats(&after)
-
-			// Two screens of 2 rows of n cells, and a cell to spare per
-			// row: 2 x 131,072 cells at n = 65535.
-			limit := 2*2*(n+1)*cellSize + 1<<20
-			if got := after.TotalAlloc - before.TotalAlloc; got >= uint64(limit) {
+	const small = 1024
+	for _, n := range []int{small, 65535} {
+		t.Run(fmt.Sprintf("2x%d", n), func(t *testing.T) {
+			if n > small {
+				if _, got, limit := crossedAspectResize(small); got >= limit {
+					t.Fatalf("2x%d: allocated %d bytes, want under %d; not trying 2x%d", small, got, limit, n)
+				}
+			}
+			e, got, limit := crossedAspectResize(n)
+			if got >= limit {
 				t.Errorf("allocated: got = %d bytes, want under %d", got, limit)
 			}
 			for i, s := range []*Screen{e.MainScreen(), e.AltScreen()} {
@@ -298,8 +342,40 @@ func TestACrossedAspectResizeAllocatesTheFinalGeometryOnce(t *testing.T) {
 				}
 			}
 		})
-		if !ok {
-			return
-		}
+	}
+}
+
+// A resize to or from no rows or no columns has no cursor row to keep: it
+// neither fails nor moves anything into history.
+func TestResizeToNoRowsOrColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		w, h  int
+		setup string
+		sizes [][2]int
+	}{
+		{"80x0 to 80x0", 80, 0, "", [][2]int{{80, 0}}},
+		{"to 80x0 twice", 80, 6, sixRows, [][2]int{{80, 0}, {80, 0}}},
+		{"to 80x0 then 100x0", 80, 6, sixRows, [][2]int{{80, 0}, {100, 0}}},
+		{"to 0x3", 80, 6, sixRows, [][2]int{{0, 3}}},
+		{"0x6 to 10x3", 0, 6, "\x1b[6;1H", [][2]int{{10, 3}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(tc.w, tc.h)
+			var off []string
+			e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
+			e.WriteString(tc.setup)
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("resize panicked: %v", r)
+				}
+			}()
+			for _, size := range tc.sizes {
+				e.Resize(size[0], size[1])
+			}
+			if e.ScrollbackLen() != 0 || len(off) != 0 {
+				t.Errorf("history: got = %q and scroll-off %q, want none", lineTexts(e.Scrollback().Lines()), off)
+			}
+		})
 	}
 }
