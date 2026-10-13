@@ -96,6 +96,11 @@ type clusterMark struct {
 	// put them back. A cluster printed anywhere else is printed again over
 	// the cells its undo blanks, and has none.
 	under []uv.Cell
+	// The character REP repeats, from before the cluster was printed. A lone
+	// "e" set it, but extended by the next Write the cluster is no longer a
+	// single byte and sets nothing, so the undo puts this back, leaving what
+	// the same bytes in one Write would.
+	lastChar rune
 }
 
 // maxCarriedCluster bounds the cluster resumeCluster extends. Rejoining costs
@@ -149,6 +154,7 @@ func (e *Emulator) resumeCluster(r rune) {
 	}
 	e.scr.setCursor(c.x, c.y, false)
 	e.atPhantom = false
+	e.lastChar = c.lastChar
 	e.grapheme = append(e.grapheme[:0], c.content...)
 }
 
@@ -208,6 +214,7 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		}
 	}
 
+	before := e.lastChar
 	if cell.Width == 1 && len(content) == 1 {
 		e.lastChar, _ = utf8.DecodeRuneInString(content)
 	}
@@ -270,6 +277,6 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// A cluster a charset mapped is not one the next Write can extend.
 		valid: cell.Content == content, scr: e.scr, content: content, x: cx, y: cy, width: cell.Width,
 		curX: e.scr.cur.X, curY: e.scr.cur.Y, phantom: e.atPhantom,
-		under: under,
+		under: under, lastChar: before,
 	}
 }
