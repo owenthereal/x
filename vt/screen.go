@@ -1,6 +1,8 @@
 package vt
 
 import (
+	"slices"
+
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/exp/ordered"
 )
@@ -368,7 +370,11 @@ func (s *Screen) InsertLine(n int) bool {
 		return false
 	}
 
-	s.buf.InsertLineArea(y, n, s.blankCell(), s.scroll)
+	if s.scrollsFullWidth() {
+		s.insertRows(y, n)
+	} else {
+		s.buf.InsertLineArea(y, n, s.blankCell(), s.scroll)
+	}
 
 	return true
 }
@@ -393,11 +399,14 @@ func (s *Screen) DeleteLine(n int) bool {
 		return false
 	}
 
+	fullWidth := s.scrollsFullWidth()
+
 	// Save lines to scrollback if we're at the top of the scroll region
 	// and the scroll region uses the full width (typical terminal scroll).
 	// This captures lines that would be lost during scroll up operations.
-	if (s.scrollback != nil || s.scrollOff != nil) && y == scroll.Min.Y &&
-		scroll.Min.X == 0 && scroll.Max.X == s.buf.Width() {
+	// This happens before the lines are deleted, because a full-width delete
+	// reuses their storage as the blank lines at the bottom of the region.
+	if (s.scrollback != nil || s.scrollOff != nil) && y == scroll.Min.Y && fullWidth {
 		// Save lines that will be deleted
 		for i := range min(n, scroll.Max.Y-y, s.buf.Height()-y) {
 			if line := s.buf.Line(y + i); line != nil {
@@ -406,9 +415,75 @@ func (s *Screen) DeleteLine(n int) bool {
 		}
 	}
 
-	s.buf.DeleteLineArea(y, n, s.blankCell(), scroll)
+	if fullWidth {
+		s.deleteRows(y, n)
+	} else {
+		s.buf.DeleteLineArea(y, n, s.blankCell(), scroll)
+	}
 
 	return true
+}
+
+// scrollsFullWidth reports whether the scroll region spans every column.
+func (s *Screen) scrollsFullWidth() bool {
+	return s.scroll.Min.X == 0 && s.scroll.Max.X == s.buf.Width()
+}
+
+// insertRows inserts n blank rows at row y of a scroll region that spans every
+// column. It rotates the region's row slices, rather than copying the cells of
+// each row as [uv.RenderBuffer.InsertLineArea] does, and blanks the rows pushed
+// out of the region to reuse as the new ones.
+func (s *Screen) insertRows(y, n int) {
+	region := s.buf.Lines[y:s.scroll.Max.Y]
+	count := min(n, len(region))
+	rotateRows(region, len(region)-count)
+	s.blankRows(region[:count])
+	s.touchRows(-n)
+}
+
+// deleteRows deletes n rows at row y of a scroll region that spans every
+// column, and adds n blank ones at its bottom. Like insertRows it rotates the
+// region's row slices, and reuses the deleted rows as the blank ones: callers
+// must be done with them.
+func (s *Screen) deleteRows(y, n int) {
+	region := s.buf.Lines[y:s.scroll.Max.Y]
+	count := min(n, len(region))
+	rotateRows(region, count)
+	s.blankRows(region[len(region)-count:])
+	s.touchRows(n)
+}
+
+// rotateRows rotates rows left by k: the first k rows move to the end, and
+// each part keeps its order. It reverses the two parts and then the whole,
+// which needs no scratch space.
+func rotateRows(rows []uv.Line, k int) {
+	slices.Reverse(rows[:k])
+	slices.Reverse(rows[k:])
+	slices.Reverse(rows)
+}
+
+// blankRows sets every cell of rows to the cursor's blank cell.
+func (s *Screen) blankRows(rows []uv.Line) {
+	blank := uv.EmptyCell
+	if c := s.blankCell(); c != nil {
+		blank = *c
+	}
+	for _, row := range rows {
+		for x := range row {
+			row[x] = blank
+		}
+	}
+}
+
+// touchRows marks the lines touched that [uv.RenderBuffer.InsertLineArea] and
+// [uv.RenderBuffer.DeleteLineArea] mark for a scroll region that spans every
+// column, so that a full-width scroll and a cell copy report the same damage:
+// every row of the region, and the row shift away from it.
+func (s *Screen) touchRows(shift int) {
+	for y := s.scroll.Min.Y; y < s.scroll.Max.Y; y++ {
+		s.buf.TouchLine(0, y, s.scroll.Max.X)
+		s.buf.TouchLine(0, y+shift, s.scroll.Max.X)
+	}
 }
 
 // blankCell returns the cursor blank cell with the background color set to the
