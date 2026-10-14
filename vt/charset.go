@@ -4,6 +4,28 @@ package vt
 // This can be used to select a character set for G0 or G1 and others.
 type CharSet map[byte]string
 
+// charsetOf returns the character set an SCS final byte designates: UK for
+// 'A', DEC special graphics for '0', and ASCII, which maps nothing, for 'B'.
+func charsetOf(final byte) CharSet {
+	switch final {
+	case 'A':
+		return UK
+	case '0':
+		return SpecialDrawing
+	default:
+		return nil
+	}
+}
+
+// resetCharsets puts the character sets back as xterm's resetCharsets does:
+// ASCII in G0-G3, G0 in GL, G2 in GR, and no single shift.
+func (e *Emulator) resetCharsets() {
+	e.charsets = [4]CharSet{}
+	e.designations = [4]byte{}
+	e.gl, e.gr = 0, 2
+	e.gsingle = 0
+}
+
 // Character sets.
 var (
 	UK = CharSet{

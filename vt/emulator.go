@@ -130,6 +130,7 @@ func NewEmulator(w, h int) *Emulator {
 		HandleSos: t.handleSos,
 	})
 	t.pr, t.pw = io.Pipe()
+	t.resetCharsets()
 	t.resetModes()
 	t.tabstops = uv.DefaultTabStops(w)
 	t.registerDefaultHandlers()

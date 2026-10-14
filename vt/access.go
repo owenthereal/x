@@ -27,9 +27,16 @@ func (e *Emulator) ActiveScreen() *Screen {
 	return e.scr
 }
 
-// SavedCursor returns the cursor saved by DECSC on this screen.
+// SavedCursor returns the cursor saved by DECSC on this screen, with what
+// DECSC saved alongside it in Saved. A slot no DECSC has filled reports what
+// DECRC restores from it, with Saved.Saved false: home, the default pen and
+// no link, ASCII in G0-G3, G0 in GL and G2 in GR, no origin mode and no wrap.
 func (s *Screen) SavedCursor() Cursor {
-	return s.saved
+	c := s.saved
+	if !c.Saved.Saved {
+		c.Saved = unsavedState
+	}
+	return c
 }
 
 // Line returns row y of the screen, or nil outside it. The line is the
@@ -88,6 +95,12 @@ func (e *Emulator) Charsets() (designations [4]byte, gl, gr int) {
 		designations[i] = d
 	}
 	return designations, e.gl, e.gr
+}
+
+// SingleShift reports the character set a single shift (SS2 or SS3) selects
+// for the next character printed: 2 or 3, or 0 when none is pending.
+func (e *Emulator) SingleShift() int {
+	return e.gsingle
 }
 
 // TabStops returns the columns that have a tab stop, ascending. The slice is

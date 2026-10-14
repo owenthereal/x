@@ -432,12 +432,16 @@ func (s *Screen) ScrollRegion() uv.Rectangle {
 	return s.scroll
 }
 
-// SaveCursor saves the cursor.
+// SaveCursor saves the cursor: its position, pen and link. An [Emulator]'s
+// DECSC saves the rest of [SavedState] with it.
 func (s *Screen) SaveCursor() {
 	s.saved = s.cur
 }
 
-// RestoreCursor restores the cursor.
+// RestoreCursor restores the saved cursor's position, pen and link. Under
+// the origin mode the slot holds, the position is clamped to the bottom and
+// right margins only, as xterm's CursorSet clamps it when DECRC moves there:
+// a slot above or left of the margins stays where it is.
 func (s *Screen) RestoreCursor() {
 	old := s.cur.Position
 	// DECRC restores the position, pen and link, but not the cursor's
@@ -445,7 +449,12 @@ func (s *Screen) RestoreCursor() {
 	hidden, style, steady := s.cur.Hidden, s.cur.Style, s.cur.Steady
 	s.cur = s.saved
 	s.cur.Hidden, s.cur.Style, s.cur.Steady = hidden, style, steady
-	s.cur.Position = clampToScreen(s.cur.Position, s.buf.Width(), s.buf.Height())
+	s.cur.Saved = SavedState{}
+	width, height := s.buf.Width(), s.buf.Height()
+	if s.saved.Saved.Origin {
+		width, height = s.scroll.Max.X, s.scroll.Max.Y
+	}
+	s.cur.Position = clampToScreen(s.cur.Position, width, height)
 
 	if s.cb.CursorPosition != nil && (old.X != s.cur.X || old.Y != s.cur.Y) {
 		s.cb.CursorPosition(old, s.cur.Position)
