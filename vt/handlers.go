@@ -771,8 +771,10 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		value, _, _ := params.Param(0, 0)
 		switch value {
 		case 0:
-			x, _ := e.scr.CursorPosition()
-			e.tabstops.Reset(x)
+			// A screen with no columns has no stop to clear.
+			if x, _ := e.scr.CursorPosition(); e.Width() > 0 {
+				e.tabstops.Reset(x)
+			}
 		case 3:
 			// Clearing every stop is a piece of work as wide as the screen.
 			if e.meter.spend(max(e.Width(), 1)) {

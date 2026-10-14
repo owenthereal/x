@@ -538,3 +538,35 @@ func TestResizeToNoRowsOrColumns(t *testing.T) {
 		})
 	}
 }
+
+// A screen with no columns has no column for a tab stop to be set or cleared
+// at: HTS, as ESC H and as C1, and TBC 0 do nothing there, on a screen made
+// with none and on one resized to none, rather than index past the stops.
+func TestTabStopsOnAScreenWithNoColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func() *Emulator
+	}{
+		{"made with no columns", func() *Emulator { return NewEmulator(0, 3) }},
+		{"resized to no columns", func() *Emulator {
+			e := NewEmulator(10, 3)
+			e.Resize(0, 3)
+			return e
+		}},
+	} {
+		for _, seq := range []string{"\x1bH", "\x88", "\x1b[g", "\x1b[0g"} {
+			t.Run(fmt.Sprintf("%s/%q", tc.name, seq), func(t *testing.T) {
+				e := tc.make()
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("%q panicked: %v", seq, r)
+					}
+				}()
+				e.WriteString(seq)
+				if got := e.TabStops(); len(got) != 0 {
+					t.Errorf("TabStops: got = %v, want none", got)
+				}
+			})
+		}
+	}
+}

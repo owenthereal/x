@@ -36,9 +36,11 @@ func (e *Emulator) index() {
 }
 
 // horizontalTabSet sets a horizontal tab stop at the current cursor position.
+// A screen with no columns has no column to set it at.
 func (e *Emulator) horizontalTabSet() {
-	x, _ := e.scr.CursorPosition()
-	e.tabstops.Set(x)
+	if x, _ := e.scr.CursorPosition(); e.Width() > 0 {
+		e.tabstops.Set(x)
+	}
 }
 
 // reverseIndex moves the cursor up one line, or scrolling down. This always
