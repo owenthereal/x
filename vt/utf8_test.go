@@ -1,6 +1,8 @@
 package vt
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -287,6 +289,121 @@ func TestACharsetMappedCharacterTakesNoMark(t *testing.T) {
 			split.check(t, tc.want)
 		})
 	}
+}
+
+// splitDiff describes the first way split ends unlike whole: a cell of either
+// screen, which screen shows, the cursor, the wrap, LastChar, the single shift
+// or Carrying. It is empty when they end alike.
+func splitDiff(whole, split *Emulator) string {
+	for i, scr := range []func(*Emulator) *Screen{(*Emulator).MainScreen, (*Emulator).AltScreen} {
+		w, s := scr(whole), scr(split)
+		for y := range w.Height() {
+			for x := range w.Width() {
+				if a, b := w.CellAt(x, y), s.CellAt(x, y); a == nil || !a.Equal(b) {
+					return fmt.Sprintf("screen %d cell (%d, %d): one Write %+v, split %+v", i, x, y, a, b)
+				}
+			}
+		}
+	}
+	type state struct {
+		alt               bool
+		pos               uv.Position
+		pending, carrying bool
+		last              rune
+		single            int
+	}
+	stateOf := func(e *Emulator) state {
+		return state{e.IsAltScreen(), e.CursorPosition(), e.PendingWrap(), e.Carrying(), e.LastChar(), e.SingleShift()}
+	}
+	if w, s := stateOf(whole), stateOf(split); w != s {
+		return fmt.Sprintf("one Write %+v, split %+v", w, s)
+	}
+	return ""
+}
+
+// Random bytes cut into two to four Writes at random offsets end as the same
+// bytes in one Write. The one exception is the bound on the cluster a Write
+// carries: past maxCarriedCluster bytes the next Write doesn't extend it.
+func FuzzWriteSplitMatchesWhole(f *testing.F) {
+	for _, s := range []struct {
+		w, h   int
+		chunks []string
+	}{
+		// TestClusterAcrossWrites.
+		{10, 1, []string{"\U0001F468\u200d", "\U0001F469\u200d\U0001F467x"}},
+		{10, 1, []string{"ae", "\u0301b"}},
+		{10, 1, []string{"e\xcc", "\x81b"}},
+		{10, 1, []string{"\U0001F1FA", "\U0001F1F8x"}},
+		{10, 1, []string{"abcdefgh世", "\u0301"}},
+		{10, 1, []string{"xyz\x1b[1;1H\x1b[4he", "\u0301"}},
+		{10, 1, []string{"e", "\r", "\u0301"}},
+		{10, 1, []string{"ae", "\x1b[1m", "\u0301"}},
+		// TestNoStaleClusterIsCarried.
+		{10, 1, []string{"ab\x07\u0301", "\u0301x"}},
+		{10, 1, []string{"e\x1b[1m\u0301", "\u0301"}},
+		{8, 2, []string{"e\x1b[1;1H\x1b[X\x1b[1;2H\u0301", "\u0301"}},
+		{8, 2, []string{"\x1b[2;1Hq\x1b[1;1He\x1b[S\u0301", "\u0301"}},
+		{5, 2, []string{"\x1b[?7labc日\x1b[1;5H\u2764\x1b[1;4H\x1b[41m\x1b[X\x1b[1;5H\u0301", "\ufe0f"}},
+		{8, 1, []string{"a\x1b[m\u200d", "\u200d\x1b[3b"}},
+		{6, 1, []string{"日\u200b", "\u0301"}},
+		// TestABaseLessClusterIsCarried.
+		{8, 1, []string{"\u200d", "\u093f"}},
+		{8, 1, []string{"a\x1b[m\u0301", "\u093f"}},
+		{8, 1, []string{"\u200d", "\x1b[$1\u093f"}},
+		{8, 1, []string{"\u0301", "\ufe0f\u093f"}},
+		{8, 1, []string{"\u0301", "\ufe0fx"}},
+		// TestACharsetMappedCharacterTakesNoMark.
+		{6, 1, []string{"\x1b(0q", "\u0302\x1b[b"}},
+		{6, 1, []string{"\x1b*0\x8ea", "\u0301b"}},
+		{6, 1, []string{"\x1b(0\x1b*B\x1bNq", "\u0302"}},
+		{6, 1, []string{"\x1b(0\x8ee", "\u0301"}},
+		// The undo at the last column, from wide_test.go.
+		{5, 2, []string{"\x1b[?7labcdX", "\u2764", "\ufe0f"}},
+		{5, 2, []string{"\x1b[?7l\x1b[4habcdX", "\u2764", "\ufe0f"}},
+		{5, 2, []string{"abc日\x1b[1;5H", "\u2764", "\ufe0f"}},
+		{5, 2, []string{"\x1b[?7labcdX\x1b[1;5H\u2764\x1b[1;5H\x1b[1K\u0301", "\ufe0f"}},
+		// TestLastCharSurvivesASplitCluster.
+		{10, 2, []string{"ae", "\u0301", "\u0302", "\x1b[b"}},
+		{10, 2, []string{"abcd", "e", "\u0301", "\x1b[2b"}},
+		{5, 2, []string{"abcde", "\u0301", "\x1b[b"}},
+		{10, 2, []string{"xyz\x1b[1;1H\x1b[4hae", "\u0301", "\x1b[b"}},
+		// The lookahead's.
+		{10, 3, []string{"x", "\x1b[b", "\u0301"}},
+		{10, 3, []string{"e", "\x1b]0;x\x18", "\u0301"}},
+		// Past the bound: one Write joins the mark, split doesn't.
+		{10, 1, []string{"e" + strings.Repeat("\u0301", 64), "\u0301"}},
+	} {
+		var cuts [3]uint16
+		end := 0
+		for i := range cuts {
+			if i < len(s.chunks)-1 {
+				end += len(s.chunks[i])
+			}
+			cuts[i] = uint16(end)
+		}
+		f.Add(uint8(s.w-1), uint8(s.h-1), cuts[0], cuts[1], cuts[2], []byte(strings.Join(s.chunks, "")))
+	}
+	f.Fuzz(func(t *testing.T, w, h uint8, a, b, c uint16, in []byte) {
+		width, height := 1+int(w%20), 1+int(h%6)
+		cuts := []int{int(a) % (len(in) + 1), int(b) % (len(in) + 1), int(c) % (len(in) + 1)}
+		slices.Sort(cuts)
+		newEmulator := func() *Emulator {
+			e := NewEmulator(width, height)
+			e.SetReplyFunc(func([]byte) {})
+			return e
+		}
+		whole, split := newEmulator(), newEmulator()
+		whole.Write(in)
+		bounded, from := false, 0
+		for _, to := range append(cuts, len(in)) {
+			bounded = bounded || split.carry.valid && len(split.carry.content) >= maxCarriedCluster
+			split.Write(in[from:to])
+			from = to
+		}
+		if diff := splitDiff(whole, split); diff != "" && !bounded {
+			t.Fatalf("%dx%d, %q cut at %v: %s", width, height, in, cuts, diff)
+		}
+	})
 }
 
 func TestPrintingASCIIDoesNotAllocate(t *testing.T) {
