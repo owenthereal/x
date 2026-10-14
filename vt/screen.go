@@ -1,8 +1,6 @@
 package vt
 
 import (
-	"slices"
-
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/exp/ordered"
 )
@@ -22,6 +20,9 @@ type Screen struct {
 	// scrollOff, when set, receives each line that leaves the screen into
 	// history, before it is overwritten.
 	scrollOff func(uv.Line)
+	// meter counts the screen's work: the emulator's meter, for an
+	// emulator's screens.
+	meter *meter
 }
 
 // NewScreen creates a new screen.
@@ -29,6 +30,7 @@ func NewScreen(w, h int) *Screen {
 	s := Screen{
 		buf:        uv.NewRenderBuffer(w, h),
 		scrollback: NewScrollback(DefaultScrollbackSize),
+		meter:      new(meter),
 	}
 	s.scroll = s.buf.Bounds()
 	return &s
@@ -38,7 +40,7 @@ func NewScreen(w, h int) *Screen {
 // It clears the screen, sets the cursor to the top left corner, reset the
 // cursor styles, and resets the scroll region.
 func (s *Screen) Reset() {
-	s.buf.Clear()
+	s.clearCells()
 	s.cur = Cursor{}
 	s.saved = Cursor{}
 	s.scroll = s.buf.Bounds()
@@ -86,13 +88,20 @@ func (s *Screen) Resize(width int, height int) {
 
 // resize resizes the screen. Unless history is set, the rows a height shrink
 // takes from the top are discarded, not moved into history, as on the
-// alternate screen, which has none.
-func (s *Screen) resize(width, height int, history bool) {
+// alternate screen, which has none. It reports false if the meter stopped it,
+// which leaves the screen at its old size.
+func (s *Screen) resize(width, height int, history bool) bool {
+	if s.meter == nil {
+		// A Screen that NewScreen didn't make has no meter yet.
+		s.meter = new(meter)
+	}
 	if s.buf == nil {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
 		if width != s.buf.Width() || height != s.buf.Height() {
-			s.reallocate(width, height, history)
+			if !s.reallocate(width, height, history) {
+				return false
+			}
 		}
 		s.buf.Touched = nil
 	}
@@ -104,6 +113,7 @@ func (s *Screen) resize(width, height int, history bool) {
 	// growth here pulls none back.
 	s.cur.Position = clampToScreen(s.cur.Position, width, height)
 	s.saved.Position = clampToScreen(s.saved.Position, width, height)
+	return true
 }
 
 // reallocate copies the rows that survive a resize into a buffer of exactly
@@ -116,7 +126,11 @@ func (s *Screen) resize(width, height int, history bool) {
 // history is set, so the cursor's row becomes the last one, where the clamp
 // in resize puts the cursor. A screen with no rows or no columns, before or
 // after, has no cursor row to keep.
-func (s *Screen) reallocate(width, height int, history bool) {
+//
+// Each row is built a span of columns at a time, metered. A stop keeps the
+// old rows, so the screen it leaves is whole, at its old size; it reports
+// false then.
+func (s *Screen) reallocate(width, height int, history bool) bool {
 	top := 0
 	if width > 0 && height > 0 && s.buf.Width() > 0 {
 		top = max(s.cur.Y-(height-1), 0)
@@ -124,17 +138,34 @@ func (s *Screen) reallocate(width, height int, history bool) {
 	old := s.buf.Lines
 	if history {
 		for _, line := range old[:top] {
-			s.pushScrollback(line)
+			if !s.pushScrollback(line) {
+				return false
+			}
 		}
 	}
 	lines := make([]uv.Line, height)
 	for y := range lines {
-		lines[y] = uv.NewLine(width)
+		line := make(uv.Line, width)
+		var src uv.Line
 		if top+y < len(old) {
-			copy(lines[y], old[top+y])
+			src = old[top+y]
 		}
+		// What uv.NewLine and a copy of the old row do: the old cells that
+		// fit, then blank ones.
+		if !s.meter.spans(0, width, func(lo, hi int) {
+			span := line[lo:hi]
+			n := copy(span, src[min(lo, len(src)):min(hi, len(src))])
+			rest := span[n:]
+			for x := range rest {
+				rest[x] = uv.EmptyCell
+			}
+		}) {
+			return false
+		}
+		lines[y] = line
 	}
 	s.buf.Lines = lines
+	return true
 }
 
 // clampToScreen returns p moved inside a width by height screen.
@@ -160,8 +191,12 @@ func (s *Screen) ClearWithScrollback() {
 		// Save all lines that have content before clearing
 		for y := 0; y < s.buf.Height(); y++ {
 			line := s.buf.Line(y)
-			if line != nil && !s.isLineEmpty(line) {
-				s.pushScrollback(line)
+			empty, ok := s.isLineEmpty(line)
+			if !ok {
+				return
+			}
+			if line != nil && !empty && !s.pushScrollback(line) {
+				return
 			}
 		}
 	}
@@ -169,14 +204,28 @@ func (s *Screen) ClearWithScrollback() {
 }
 
 // pushScrollback hands a line leaving the screen to the scrollback buffer and
-// the scroll-off function.
-func (s *Screen) pushScrollback(line uv.Line) {
+// the scroll-off function. It reports false, pushing nothing, if the meter
+// stopped it.
+//
+// The line goes to each whole: the scrollback copies it, and moves every line
+// it holds to drop the oldest once it is full, and the scroll-off function
+// does what it does. So the push is charged as one piece, which is larger
+// than the interval only for a line or a scrollback longer than it.
+func (s *Screen) pushScrollback(line uv.Line) bool {
+	work := max(len(line), 1)
+	if sb := s.scrollback; sb != nil && sb.maxLines > 0 && len(sb.lines) >= sb.maxLines {
+		work += len(sb.lines)
+	}
+	if !s.meter.spend(work) {
+		return false
+	}
 	if s.scrollback != nil {
 		s.scrollback.Push(line)
 	}
 	if s.scrollOff != nil {
 		s.scrollOff(line)
 	}
+	return true
 }
 
 // SetScrollOffFunc sets fn to receive each line that leaves the screen into
@@ -187,20 +236,26 @@ func (s *Screen) SetScrollOffFunc(fn func(uv.Line)) {
 	s.scrollOff = fn
 }
 
-// isLineEmpty returns true if the line contains only empty/space cells.
-func (s *Screen) isLineEmpty(line uv.Line) bool {
-	for _, cell := range line {
-		if cell.Content != "" && cell.Content != " " {
-			return false
+// isLineEmpty reports whether the line contains only empty/space cells,
+// reading it a metered span at a time. ok is false if the meter stopped it.
+func (s *Screen) isLineEmpty(line uv.Line) (empty, ok bool) {
+	for lo := 0; lo < len(line); lo += meterInterval {
+		hi := min(lo+meterInterval, len(line))
+		if !s.meter.spend(hi - lo) {
+			return false, false
+		}
+		for _, cell := range line[lo:hi] {
+			if cell.Content != "" && cell.Content != " " {
+				return false, true
+			}
 		}
 	}
-	return true
+	return true, true
 }
 
 // ClearArea clears the given area.
 func (s *Screen) ClearArea(area uv.Rectangle) {
-	s.buf.ClearArea(area)
-	s.touchArea(area)
+	s.fillArea(nil, area)
 }
 
 // Fill fills the screen or part of it.
@@ -210,8 +265,62 @@ func (s *Screen) Fill(c *uv.Cell) {
 
 // FillArea fills the given area with the given cell.
 func (s *Screen) FillArea(c *uv.Cell, area uv.Rectangle) {
-	s.buf.FillArea(c, area)
-	s.touchArea(area)
+	s.fillArea(c, area)
+}
+
+// fillArea fills area with c, or clears it if c is nil, and marks it touched,
+// as [uv.Buffer.FillArea] and a touch of each of its rows do: SetCell on every
+// c's width of cells from the area's left edge. It fills a metered span of a
+// row at a time, charging each SetCell's scan from a placeholder too, until
+// the meter stops it.
+//
+// SetCell ignores a cell off the screen, so only the rows on it, and the
+// columns left of its right edge, need a visit. The spans start where the
+// area does and are a whole number of c's width, so a wide c lands where it
+// would in one pass.
+func (s *Screen) fillArea(c *uv.Cell, area uv.Rectangle) {
+	step := 1
+	if c != nil && c.Width > 1 {
+		step = c.Width
+	}
+	span := max(meterInterval-meterInterval%step, step)
+	right := min(area.Max.X, s.buf.Width())
+	for y := max(area.Min.Y, 0); y < min(area.Max.Y, s.buf.Height()); y++ {
+		if area.Min.X >= right && !s.meter.spend(1) {
+			return
+		}
+		for lo := area.Min.X; lo < right; lo += span {
+			hi := min(lo+span, right)
+			if !s.meter.spend(hi - lo) {
+				return
+			}
+			for x := lo; x < hi; x += step {
+				// chargeScan, spelled out so that it inlines in a loop
+				// every erase runs.
+				if n := s.scanCost(x, y); n > 0 && !s.meter.spend(n) {
+					return
+				}
+				s.buf.Buffer.SetCell(x, y, c)
+			}
+		}
+		s.buf.TouchLine(area.Min.X, y, area.Dx())
+	}
+}
+
+// clearCells sets every cell of the screen to [uv.EmptyCell], as
+// [uv.Buffer.Clear] does, a metered span of a row at a time, until the meter
+// stops it.
+func (s *Screen) clearCells() {
+	for _, line := range s.buf.Lines {
+		if !s.meter.spans(0, len(line), func(lo, hi int) {
+			span := line[lo:hi]
+			for x := range span {
+				span[x] = uv.EmptyCell
+			}
+		}) {
+			return
+		}
+	}
 }
 
 // setHorizontalMargins sets the horizontal margins.
@@ -370,7 +479,7 @@ func (s *Screen) InsertCell(n int) {
 	// distance to it inserts no more. Outside the margins nothing is inserted,
 	// whatever the count.
 	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.buf.InsertCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.insertCellArea(x, y, n, s.blankCell(), s.scroll)
 }
 
 // DeleteCell deletes n cells at the cursor position moving cells to the left.
@@ -385,7 +494,108 @@ func (s *Screen) DeleteCell(n int) {
 	// to it deletes no more. Outside the margins nothing is deleted, whatever
 	// the count.
 	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.buf.DeleteCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.deleteCellArea(x, y, n, s.blankCell(), s.scroll)
+}
+
+// insertCellArea inserts n cells set to c at x on row y, within area, as
+// [uv.RenderBuffer.InsertCellArea] does: the cells from x move right, and
+// those pushed past the area's right edge are lost. It reports false if the
+// meter stopped it.
+//
+// It moves a metered span at a time, from the right end, so each span's
+// source is left of every cell moved yet; and it sets the cells opened as
+// ultraviolet does, through SetCell. ultraviolet's own call can't be split by
+// columns and come out the same, since its SetCell mends a wide character
+// across the split.
+func (s *Screen) insertCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool {
+	if s.inCellArea(x, y, n, area) {
+		line := s.buf.Lines[y]
+		m := min(n, area.Max.X-x)
+		for hi := area.Max.X; hi > x+m; {
+			lo := max(hi-meterInterval, x+m)
+			if !s.meter.spend(hi - lo) {
+				return false
+			}
+			copy(line[lo:hi], line[lo-m:hi-m])
+			hi = lo
+		}
+		if !s.setCells(x, x+m, y, c) {
+			return false
+		}
+	}
+	if x+n > area.Max.X {
+		n = area.Max.X - x
+	}
+	s.buf.TouchLine(x, y, n)
+	return true
+}
+
+// deleteCellArea deletes n cells at x on row y, within area, and sets the
+// cells opened at the area's right edge to c, as
+// [uv.RenderBuffer.DeleteCellArea] does: each cell moves through SetCell, a
+// metered span at a time. It reports false if the meter stopped it.
+//
+// That order of moves leaves an orphaned placeholder at every other column of
+// a row of wide characters, which the next move's SetCell scans back from:
+// the charges for those scans keep the stop function coming.
+func (s *Screen) deleteCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool {
+	if s.inCellArea(x, y, n, area) {
+		m := min(n, area.Max.X-x)
+		if !s.meter.spans(x, area.Max.X-m, func(lo, hi int) {
+			for i := lo; i < hi && s.chargeScan(i, y); i++ {
+				s.buf.Buffer.SetCell(i, y, s.buf.CellAt(i+m, y))
+			}
+		}) {
+			return false
+		}
+		if !s.setCells(area.Max.X-m, area.Max.X, y, c) {
+			return false
+		}
+	}
+	if remaining := area.Max.X - x; n > remaining {
+		n = remaining
+	}
+	s.buf.TouchLine(x, y, n)
+	return true
+}
+
+// inCellArea reports whether a shift of n cells at x on row y, within area,
+// moves anything: the test [uv.Buffer.InsertCellArea] and
+// [uv.Buffer.DeleteCellArea] make first.
+func (s *Screen) inCellArea(x, y, n int, area uv.Rectangle) bool {
+	return n > 0 && y >= area.Min.Y && y < area.Max.Y && y < s.buf.Height() &&
+		x >= area.Min.X && x < area.Max.X && x < s.buf.Width()
+}
+
+// setCells sets cells [from, to) of row y to c through ultraviolet's SetCell,
+// which mends a wide character a cell cuts, a metered span at a time. It
+// reports false if the meter stopped it.
+func (s *Screen) setCells(from, to, y int, c *uv.Cell) bool {
+	return s.meter.spans(from, to, func(lo, hi int) {
+		for x := lo; x < hi && s.chargeScan(x, y); x++ {
+			s.buf.Buffer.SetCell(x, y, c)
+		}
+	})
+}
+
+// chargeScan charges, before ultraviolet's SetCell writes over the cell at x
+// on row y, the scan it makes when that cell is a wide character's
+// placeholder (see scanCost). A span charges the cell itself. It reports
+// false if the meter stopped it.
+func (s *Screen) chargeScan(x, y int) bool {
+	n := s.scanCost(x, y)
+	return n == 0 || s.meter.spend(n)
+}
+
+// scanCost returns the most ultraviolet's SetCell reads before it writes over
+// the cell at x on row y: when that cell is a wide character's placeholder,
+// it scans back toward column 0 for the character the placeholder belongs to,
+// as far as column 0 when the character is gone, x+1 cells; otherwise none.
+func (s *Screen) scanCost(x, y int) int {
+	if cell := s.buf.CellAt(x, y); cell != nil && cell.Width == 0 {
+		return x + 1
+	}
+	return 0
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
@@ -434,7 +644,7 @@ func (s *Screen) InsertLine(n int) bool {
 	if s.scrollsFullWidth() {
 		s.insertRows(y, n)
 	} else {
-		s.buf.InsertLineArea(y, n, s.blankCell(), s.scroll)
+		s.shiftRowsDown(y, n, s.blankCell())
 	}
 
 	return true
@@ -474,8 +684,8 @@ func (s *Screen) DeleteLine(n int) bool {
 	if (s.scrollback != nil || s.scrollOff != nil) && y == scroll.Min.Y && fullWidth {
 		// Save lines that will be deleted
 		for i := range min(n, scroll.Max.Y-y, s.buf.Height()-y) {
-			if line := s.buf.Line(y + i); line != nil {
-				s.pushScrollback(line)
+			if line := s.buf.Line(y + i); line != nil && !s.pushScrollback(line) {
+				return true
 			}
 		}
 	}
@@ -483,7 +693,7 @@ func (s *Screen) DeleteLine(n int) bool {
 	if fullWidth {
 		s.deleteRows(y, n)
 	} else {
-		s.buf.DeleteLineArea(y, n, s.blankCell(), scroll)
+		s.shiftRowsUp(y, n, s.blankCell())
 	}
 
 	return true
@@ -497,13 +707,14 @@ func (s *Screen) scrollsFullWidth() bool {
 // insertRows inserts n blank rows at row y of a scroll region that spans every
 // column. It rotates the region's row slices, rather than copying the cells of
 // each row as [uv.RenderBuffer.InsertLineArea] does, and blanks the rows pushed
-// out of the region to reuse as the new ones.
+// out of the region to reuse as the new ones. The meter can stop it between
+// spans of each part.
 func (s *Screen) insertRows(y, n int) {
 	region := s.buf.Lines[y:s.scroll.Max.Y]
 	count := min(n, len(region))
-	rotateRows(region, len(region)-count)
-	s.blankRows(region[:count])
-	s.touchRows(-n)
+	if s.rotateRows(region, len(region)-count) && s.blankRows(region[:count]) {
+		s.touchRows(-n)
+	}
 }
 
 // deleteRows deletes n rows at row y of a scroll region that spans every
@@ -513,42 +724,112 @@ func (s *Screen) insertRows(y, n int) {
 func (s *Screen) deleteRows(y, n int) {
 	region := s.buf.Lines[y:s.scroll.Max.Y]
 	count := min(n, len(region))
-	rotateRows(region, count)
-	s.blankRows(region[len(region)-count:])
+	if s.rotateRows(region, count) && s.blankRows(region[len(region)-count:]) {
+		s.touchRows(n)
+	}
+}
+
+// shiftRowsDown moves the cells of the scroll region's rows from row y down by
+// n, and sets the n rows opened to c, as [uv.RenderBuffer.InsertLineArea]
+// does, for a region narrower than the screen, whose rows can't simply
+// rotate. It copies a metered span of a row at a time, until the meter stops
+// it. The caller keeps y inside the region and n within it.
+func (s *Screen) shiftRowsDown(y, n int, c *uv.Cell) {
+	area := s.scroll
+	for i := area.Max.Y - 1; i >= y+n; i-- {
+		if !s.copyRow(i, i-n) {
+			return
+		}
+	}
+	for i := y; i < y+n; i++ {
+		if !s.setCells(area.Min.X, area.Max.X, i, c) {
+			return
+		}
+	}
+	s.touchRows(-n)
+}
+
+// shiftRowsUp moves the cells of the scroll region's rows below row y up by n,
+// and sets the n rows opened at the region's bottom to c, as
+// [uv.RenderBuffer.DeleteLineArea] does. Like shiftRowsDown it is metered,
+// for a region narrower than the screen.
+func (s *Screen) shiftRowsUp(y, n int, c *uv.Cell) {
+	area := s.scroll
+	for i := y; i < area.Max.Y-n; i++ {
+		if !s.copyRow(i, i+n) {
+			return
+		}
+	}
+	for i := area.Max.Y - n; i < area.Max.Y; i++ {
+		if !s.setCells(area.Min.X, area.Max.X, i, c) {
+			return
+		}
+	}
 	s.touchRows(n)
+}
+
+// copyRow copies the scroll region's columns of row src to row dst, a metered
+// span at a time. It reports false if the meter stopped it.
+func (s *Screen) copyRow(dst, src int) bool {
+	to, from := s.buf.Lines[dst], s.buf.Lines[src]
+	return s.meter.spans(s.scroll.Min.X, s.scroll.Max.X, func(lo, hi int) {
+		copy(to[lo:hi], from[lo:hi])
+	})
 }
 
 // rotateRows rotates rows left by k: the first k rows move to the end, and
 // each part keeps its order. It reverses the two parts and then the whole,
-// which needs no scratch space.
-func rotateRows(rows []uv.Line, k int) {
-	slices.Reverse(rows[:k])
-	slices.Reverse(rows[k:])
-	slices.Reverse(rows)
+// which needs no scratch space. It reports false if the meter stopped it.
+func (s *Screen) rotateRows(rows []uv.Line, k int) bool {
+	return s.reverseRows(rows[:k]) && s.reverseRows(rows[k:]) && s.reverseRows(rows)
 }
 
-// blankRows sets every cell of rows to the cursor's blank cell.
-func (s *Screen) blankRows(rows []uv.Line) {
+// reverseRows reverses rows, as [slices.Reverse] does, a metered span of swaps
+// at a time. It reports false if the meter stopped it.
+func (s *Screen) reverseRows(rows []uv.Line) bool {
+	last := len(rows) - 1
+	return s.meter.spans(0, len(rows)/2, func(lo, hi int) {
+		for i := lo; i < hi; i++ {
+			rows[i], rows[last-i] = rows[last-i], rows[i]
+		}
+	})
+}
+
+// blankRows sets every cell of rows to the cursor's blank cell, a metered span
+// of a row at a time. It reports false if the meter stopped it.
+func (s *Screen) blankRows(rows []uv.Line) bool {
 	blank := uv.EmptyCell
 	if c := s.blankCell(); c != nil {
 		blank = *c
 	}
 	for _, row := range rows {
-		for x := range row {
-			row[x] = blank
+		if !s.meter.spans(0, len(row), func(lo, hi int) {
+			// Ranging over the span, not indexing up to hi, keeps the
+			// bounds checks out of a loop every scroll runs.
+			span := row[lo:hi]
+			for x := range span {
+				span[x] = blank
+			}
+		}) {
+			return false
 		}
 	}
+	return true
 }
 
 // touchRows marks the lines touched that [uv.RenderBuffer.InsertLineArea] and
-// [uv.RenderBuffer.DeleteLineArea] mark for a scroll region that spans every
-// column, so that a full-width scroll and a cell copy report the same damage:
-// every row of the region, and the row shift away from it.
+// [uv.RenderBuffer.DeleteLineArea] mark, so that a full-width scroll and a
+// cell copy report the same damage: every row of the region, and the row
+// shift away from it. It marks a metered span of rows at a time, until the
+// meter stops it.
 func (s *Screen) touchRows(shift int) {
-	for y := s.scroll.Min.Y; y < s.scroll.Max.Y; y++ {
-		s.buf.TouchLine(0, y, s.scroll.Max.X)
-		s.buf.TouchLine(0, y+shift, s.scroll.Max.X)
-	}
+	x, w := s.scroll.Min.X, s.scroll.Dx()
+	s.meter.spans(s.scroll.Min.Y, s.scroll.Max.Y, func(lo, hi int) {
+		for y := lo; y < hi; y++ {
+			s.buf.TouchLine(x, y, w)
+			s.buf.TouchLine(x, y+shift, w)
+		}
+	})
 }
 
 // blankCell returns the cursor blank cell with the background color set to the
@@ -562,13 +843,6 @@ func (s *Screen) blankCell() *uv.Cell {
 	c := uv.EmptyCell
 	c.Style.Bg = s.cur.Pen.Bg
 	return &c
-}
-
-// touchArea marks all lines in the given area as touched.
-func (s *Screen) touchArea(area uv.Rectangle) {
-	for y := area.Min.Y; y < area.Max.Y; y++ {
-		s.buf.TouchLine(area.Min.X, y, area.Max.X-area.Min.X)
-	}
 }
 
 // Scrollback returns the screen's scrollback buffer.
