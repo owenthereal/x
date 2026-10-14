@@ -196,6 +196,34 @@ func TestEveryNonPrintActionClosesTheCluster(t *testing.T) {
 	}
 }
 
+// The next Write extends a carried cluster only while it is shorter than
+// maxCarriedCluster bytes, and Carrying says so at the bound.
+func TestCarryingStopsAtTheLongestClusterCarried(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cluster  string
+		carrying bool
+	}{
+		{"a byte short of the bound", "e" + strings.Repeat("\u0301", 63), true},
+		{"at the bound", "e" + strings.Repeat("\u0301", 62) + "\u20d0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if n := len(tc.cluster); n != maxCarriedCluster-1 && n != maxCarriedCluster {
+				t.Fatalf("cluster of %d bytes, want %d or %d", n, maxCarriedCluster-1, maxCarriedCluster)
+			}
+			e := newLookaheadEmulator(t)
+			e.WriteString(tc.cluster)
+			if e.Carrying() != tc.carrying {
+				t.Errorf("Carrying after %d bytes: got = %t, want = %t", len(tc.cluster), e.Carrying(), tc.carrying)
+			}
+			e.WriteString("\u0301")
+			if joined := e.CellAt(0, 0).Content == tc.cluster+"\u0301"; joined != tc.carrying {
+				t.Errorf("the next Write's mark joined: got = %t, want = %t", joined, tc.carrying)
+			}
+		})
+	}
+}
+
 // A resize between a base character and its combining mark ends the
 // cluster.
 func TestAResizeClosesTheCluster(t *testing.T) {

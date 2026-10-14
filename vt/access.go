@@ -98,7 +98,10 @@ func (e *Emulator) HandoffPrefix(b []byte) int {
 // printing has happened since. A mark at the start of the next Write then
 // joins that cluster, as it would have arriving in the same Write.
 func (e *Emulator) Carrying() bool {
-	return e.carry.valid
+	// Between Writes the cursor and the screen are where the cluster left
+	// them, so of resumeCluster's conditions only the bound on its length
+	// and the rune that comes next can refuse it.
+	return e.carry.valid && len(e.carry.content) < maxCarriedCluster
 }
 
 // Mode returns the setting of a mode, or [ansi.ModeNotRecognized] for a mode
