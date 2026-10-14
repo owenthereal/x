@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -287,38 +288,59 @@ func TestLookaheadHasNoEffect(t *testing.T) {
 	}
 }
 
-// Random bytes written in random pieces: after HandoffPrefix's prefix the
-// emulator carries no cluster and is between sequences, and after
-// GroundPrefix's it is between sequences.
+// Random bytes written in random pieces, on a screen of up to 20x5: after
+// HandoffPrefix's prefix the emulator carries no cluster and is between
+// sequences, and after GroundPrefix's it is between sequences.
 func FuzzHandoffPrefixLeavesNothingCarried(f *testing.F) {
-	for _, s := range []struct{ pre, b string }{
-		{"e", "\x1b[m\u0301"},
-		{"e", "\x1b]0;x\x18\u0301"},
-		{"e", "\x1b[$1\u0301\r"},
-		{"x", "\x1b[b"},
-		{"x", "\x1b[\x02`\u0301"},
-		{"x\x1b[", "\x02`"},
-		{"\x1b]0;\xe2", "\x9c\xb3\x07e"},
-		{"ab", "\r\ncd\u0301\x1b[3b"},
-		{"\x1b(0q", "\u0302\x1b[b"},
-		{"日\u200b", "\u0301\x07"},
-		{"\x1bP1", "\x18e\u0301"},
+	for _, s := range []struct {
+		w, h   uint8
+		pre, b string
+	}{
+		{19, 4, "e", "\x1b[m\u0301"},
+		{19, 4, "e", "\x1b]0;x\x18\u0301"},
+		{19, 4, "e", "\x1b[$1\u0301\r"},
+		{19, 4, "x", "\x1b[b"},
+		{19, 4, "x", "\x1b[\x02`\u0301"},
+		{19, 4, "x\x1b[", "\x02`"},
+		{19, 4, "\x1b]0;\xe2", "\x9c\xb3\x07e"},
+		{19, 4, "ab", "\r\ncd\u0301\x1b[3b"},
+		{19, 4, "\x1b(0q", "\u0302\x1b[b"},
+		{19, 4, "日\u200b", "\u0301\x07"},
+		{19, 4, "\x1bP1", "\x18e\u0301"},
+		// A cluster too wide for the line is carried unprinted: on 1x1, where
+		// a control ends it, and at the last column without DECAWM, where a
+		// mark joins it first.
+		{0, 0, "日", "\x07\u0301"},
+		{19, 4, "\x1b[?7l\x1b[1;20H日", "\u0301\x1b[m\u0301"},
 	} {
-		f.Add([]byte(s.pre), []byte(s.b))
+		f.Add(s.w, s.h, []byte(s.pre), []byte(s.b))
 	}
-	f.Fuzz(func(t *testing.T, pre, b []byte) {
-		e := NewEmulator(20, 5)
+	f.Fuzz(func(t *testing.T, w, h uint8, pre, b []byte) {
+		e := NewEmulator(1+int(w)%20, 1+int(h)%5)
 		e.SetReplyFunc(func([]byte) {})
-		e.Write(pre)
+		// REP does the work its count asks for, up to 65,535 prints each,
+		// so an input past about a million cell operations is skipped
+		// rather than left to run past the fuzzer's time limit.
+		calls := 0
+		e.SetStopFunc(func() bool {
+			calls++
+			return calls > 16
+		})
+		write := func(p []byte) {
+			if _, err := e.Write(p); errors.Is(err, ErrStopped) {
+				t.Skip("more work than the fuzz allows an input")
+			}
+		}
+		write(pre)
 		n, g := e.HandoffPrefix(b), e.GroundPrefix(b)
 		if n > g {
 			t.Fatalf("after %q: HandoffPrefix(%q) = %d past GroundPrefix = %d", pre, b, n, g)
 		}
-		e.Write(b[:n])
+		write(b[:n])
 		if n > 0 && (e.Carrying() || !e.AtBoundary()) {
 			t.Fatalf("after %q then %q: got Carrying %t, AtBoundary %t, want false and true", pre, b[:n], e.Carrying(), e.AtBoundary())
 		}
-		e.Write(b[n:g])
+		write(b[n:g])
 		if !e.AtBoundary() && g > 0 {
 			t.Fatalf("after %q then %q: AtBoundary got = false, want = true", pre, b[:g])
 		}
