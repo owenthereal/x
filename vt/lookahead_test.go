@@ -75,6 +75,23 @@ func closingActions() []struct{ name, action string } {
 	return actions
 }
 
+// keepingActions reach ground state with nothing dispatched, so x/vt (like
+// xterm) keeps the cluster being printed, and they are no handoff point: a
+// string CAN or SUB aborts, a CSI the parser ignores, and a byte it ignores
+// in ground state.
+func keepingActions() []struct{ name, action string } {
+	return []struct{ name, action string }{
+		{"OSC aborted by CAN", "\x1b]0;x\x18"},
+		{"OSC aborted by SUB", "\x1b]0;x\x1a"},
+		{"DCS aborted by CAN", "\x1bPz\x18"},
+		{"APC aborted by SUB", "\x1b_x\x1a"},
+		{"PM aborted by CAN", "\x1b^x\x18"},
+		{"SOS aborted by SUB", "\x1bXx\x1a"},
+		{"an ignored CSI", "\x1b[$1"},
+		{"a byte the parser ignores", "\xff"},
+	}
+}
+
 // rowsOf returns the text of each of e's rows.
 func rowsOf(e *Emulator) []string {
 	rows := make([]string, e.Height())
@@ -126,19 +143,7 @@ func TestEveryNonPrintActionClosesTheCluster(t *testing.T) {
 		})
 	}
 
-	// A string CAN or SUB aborts, a CSI the parser ignores, and a byte it
-	// ignores in ground state reach ground state with nothing dispatched:
-	// x/vt (like xterm) keeps the cluster, and they are no handoff point.
-	for _, tc := range []struct{ name, action string }{
-		{"OSC aborted by CAN", "\x1b]0;x\x18"},
-		{"OSC aborted by SUB", "\x1b]0;x\x1a"},
-		{"DCS aborted by CAN", "\x1bPz\x18"},
-		{"APC aborted by SUB", "\x1b_x\x1a"},
-		{"PM aborted by CAN", "\x1b^x\x18"},
-		{"SOS aborted by SUB", "\x1bXx\x1a"},
-		{"an ignored CSI", "\x1b[$1"},
-		{"a byte the parser ignores", "\xff"},
-	} {
+	for _, tc := range keepingActions() {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newLookaheadEmulator(t)
 			e.WriteString("e")

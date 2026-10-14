@@ -371,10 +371,11 @@ func splitDiff(whole, split *Emulator) string {
 // bytes in one Write. The one exception is the bound on the cluster a Write
 // carries: past maxCarriedCluster bytes the next Write doesn't extend it.
 func FuzzWriteSplitMatchesWhole(f *testing.F) {
-	for _, s := range []struct {
+	type seed struct {
 		w, h   int
 		chunks []string
-	}{
+	}
+	seeds := []seed{
 		// TestClusterAcrossWrites.
 		{10, 1, []string{"\U0001F468\u200d", "\U0001F469\u200d\U0001F467x"}},
 		{10, 1, []string{"ae", "\u0301b"}},
@@ -396,10 +397,15 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		{8, 1, []string{"\u200d", "\u093f"}},
 		{8, 1, []string{"a\x1b[m\u0301", "\u093f"}},
 		{8, 1, []string{"\u200d", "\x1b[$1\u093f"}},
+		{8, 1, []string{"\u0301", "\u093f"}},
+		{8, 1, []string{"\u0301", "\ufe0f"}},
 		{8, 1, []string{"\u0301", "\ufe0f\u093f"}},
 		{8, 1, []string{"\u0301", "\ufe0fx"}},
+		{8, 1, []string{"\u200b", "\u093f"}},
 		// TestACharsetMappedCharacterTakesNoMark.
+		{6, 1, []string{"\x1b(0q", "\u0302"}},
 		{6, 1, []string{"\x1b(0q", "\u0302\x1b[b"}},
+		{6, 1, []string{"\x1b(0A", "\u0301"}},
 		{6, 1, []string{"\x1b*0\x8ea", "\u0301b"}},
 		{6, 1, []string{"\x1b(0\x1b*B\x1bNq", "\u0302"}},
 		{6, 1, []string{"\x1b(0\x8ee", "\u0301"}},
@@ -409,21 +415,39 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		{5, 2, []string{"abc日\x1b[1;5H", "\u2764", "\ufe0f"}},
 		{5, 2, []string{"\x1b[?7labcdX\x1b[1;5H\u2764\x1b[1;5H\x1b[1K\u0301", "\ufe0f"}},
 		// TestLastCharSurvivesASplitCluster.
+		{10, 2, []string{"ae", "\u0301", "\x1b[b"}},
+		{10, 2, []string{"ae", "\u0301\x1b[b"}},
+		{10, 2, []string{"e", "\u0301", "\x1b[b"}},
 		{10, 2, []string{"ae", "\u0301", "\u0302", "\x1b[b"}},
 		{10, 2, []string{"abcd", "e", "\u0301", "\x1b[2b"}},
 		{5, 2, []string{"abcde", "\u0301", "\x1b[b"}},
 		{10, 2, []string{"xyz\x1b[1;1H\x1b[4hae", "\u0301", "\x1b[b"}},
-		// The lookahead's.
-		{10, 3, []string{"x", "\x1b[b", "\u0301"}},
-		{10, 3, []string{"e", "\x1b]0;x\x18", "\u0301"}},
+		{10, 2, []string{"ae", "b", "\x1b[b"}},
+		{10, 2, []string{"ae", "\u00e9", "\x1b[b"}},
+		{10, 2, []string{"ae", "世", "\x1b[b"}},
+		{10, 2, []string{"ae", "\x1b[m", "\u0301", "\x1b[b"}},
 		// TestAClusterTooWideToPrintIsCarried.
 		{1, 1, []string{"世", "\u0301"}},
 		{1, 1, []string{"世\xcc", "\x81"}},
+		{1, 1, []string{"世", "\u0301", "\u0302"}},
 		{1, 1, []string{"\x1bN世", "\u0301"}},
+		{5, 1, []string{"\x1b[?7labcd世", "\u0301"}},
 		{5, 1, []string{"\x1b[?7labcd\U0001F600", "\ufe0e"}},
+		{1, 1, []string{"世", "\u093f"}},
+		{5, 1, []string{"\x1b[?7labcd世", "\u093f"}},
+		{5, 1, []string{"\x1b[?7labcd\U0001F600", "\u093f"}},
 		// Past the bound: one Write joins the mark, split doesn't.
 		{10, 1, []string{"e" + strings.Repeat("\u0301", 64), "\u0301"}},
-	} {
+	}
+	// TestEveryNonPrintActionClosesTheCluster's, each kind between "e" and
+	// a mark, and REP after another base.
+	actions := append(closingActions(), keepingActions()...)
+	actions = append(actions, struct{ name, action string }{"REP", "\x1b[b"}, struct{ name, action string }{"REP 0", "\x1b[0b"})
+	for _, a := range actions {
+		seeds = append(seeds, seed{10, 3, []string{"e", a.action, "\u0301"}})
+	}
+	seeds = append(seeds, seed{10, 3, []string{"x", "\x1b[b", "\u0301"}})
+	for _, s := range seeds {
 		var cuts [3]uint16
 		end := 0
 		for i := range cuts {
