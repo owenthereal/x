@@ -243,6 +243,10 @@ func TestACharsetMappedCharacterTakesNoMark(t *testing.T) {
 		{"DEC special graphics, then REP", []string{"\x1b(0q", "\u0302\x1b[b"}, wideState{[]string{"──"}, uv.Pos(2, 0), false}},
 		{"a single shift", []string{"\x1b*0\x8ea", "\u0301b"}, wideState{[]string{"▒b"}, uv.Pos(2, 0), false}},
 		{"a byte the charset doesn't map", []string{"\x1b(0A", "\u0301"}, wideState{[]string{"A\u0301"}, uv.Pos(1, 0), false}},
+		// The shifted charset maps nothing, though GL would: the byte
+		// joins its mark, and the shift is the joined cluster's.
+		{"a byte the shifted charset doesn't map", []string{"\x1b(0\x1b*B\x1bNq", "\u0302"}, wideState{[]string{"q\u0302"}, uv.Pos(1, 0), false}},
+		{"a byte the C1-shifted charset doesn't map", []string{"\x1b(0\x8ee", "\u0301"}, wideState{[]string{"e\u0301"}, uv.Pos(1, 0), false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, whole := writeWide(6, 1, strings.Join(tc.chunks, ""))
