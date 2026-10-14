@@ -11,7 +11,10 @@ func TestRestoreCursorKeepsVisibilityAndShape(t *testing.T) {
 	}
 }
 
-func TestRestoreCursorClearsPendingWrap(t *testing.T) {
+// The slot holds the wrap pending at DECSC, as xterm's CursorSave2 saves
+// do_wrap, and DECRC restores it: a slot saved with none clears the wrap the
+// "x" left at the last column, so the "y" lands at column 0 of the same row.
+func TestRestoringASlotSavedWithNoWrapClearsThePendingWrap(t *testing.T) {
 	for _, restore := range []string{"\x1b8", "\x1b[?1048l"} {
 		e := newTestTerminal(t, 10, 3)
 		_, _ = e.WriteString("\x1b7\x1b[9Cx" + restore + "y")
