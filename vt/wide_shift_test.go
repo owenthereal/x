@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -218,11 +217,13 @@ func TestTheCarriedUndoRestoresWideCharacters(t *testing.T) {
 	}
 }
 
-// Found in F5's review: ultraviolet's Line.Set scans left from a placeholder
-// target, so on the base a DCH at column 0 of a 131,072x1 row of 日 is
+// ultraviolet's Line.Set scans left from a placeholder target, so a DCH at
+// column 0 of a 131,072x1 row of 日 that moves the cells through it is
 // quadratic (5.4 s), and leaves an orphaned placeholder at every other column
 // for the next erase to scan from. With vt's own raw moves that DCH, and an
-// EL 2 over the row it leaves, each complete in under 100 ms.
+// EL 2 over the row it leaves, are each charged at most four times the
+// row's width: the meter charges each SetCell's scan, so work that grows
+// faster than the row shows in the count.
 func TestShiftsOverWideRowsAreLinear(t *testing.T) {
 	const w = 131072
 	e := NewEmulator(w, 1)
@@ -246,12 +247,10 @@ func TestShiftsOverWideRowsAreLinear(t *testing.T) {
 			}
 		}},
 	} {
-		start := time.Now()
-		e.WriteString(op.seq)
-		elapsed := time.Since(start)
-		t.Logf("%s: %v", op.name, elapsed)
-		if elapsed > 100*time.Millisecond {
-			t.Errorf("%s: took %v, want under 100ms", op.name, elapsed)
+		charged, _ := charges(e, func() { e.WriteString(op.seq) })
+		t.Logf("%s: %d cell operations charged", op.name, charged)
+		if most := 4 * w; charged > most {
+			t.Errorf("%s: %d cell operations charged, want at most %d, four times the row", op.name, charged, most)
 		}
 		op.check()
 	}
