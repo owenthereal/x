@@ -451,6 +451,144 @@ func (p *Parser) performAction(action parser.Action, state parser.State, b byte)
 	}
 }
 
+// GroundPrefix returns the length of the longest prefix of b after which the
+// parser, continuing from its current state, would be in ground state: no
+// unfinished escape sequence, control string or UTF-8 rune. It runs a copy of
+// the state machine (the state, and the UTF-8 progress inside ground and
+// inside strings), calls no handler and changes nothing.
+func (p *Parser) GroundPrefix(b []byte) int {
+	ground, _ := p.lookahead(b)
+	return ground
+}
+
+// HandoffPrefix returns the length of the longest prefix of b that ends in
+// ground state right after an action that isn't a print: a control character
+// executed, or a sequence or control string dispatched. It is 0 if no prefix
+// does. A string that CAN or SUB aborts, and a CSI the parser ignores, reach
+// ground state with nothing dispatched, so they don't count; neither does REP
+// (CSI b), which prints the last graphic character again. Like
+// [Parser.GroundPrefix], it runs a copy of the state machine, calls no handler
+// and changes nothing.
+//
+// An emulator that ends the grapheme cluster it is printing whenever its
+// handler is given a control function holds, at such a point, no cluster a
+// later byte could extend: what it has parsed can be handed to another
+// terminal there, and the bytes after it sent raw, without splitting one.
+func (p *Parser) HandoffPrefix(b []byte) int {
+	_, handoff := p.lookahead(b)
+	return handoff
+}
+
+// lookahead runs b through a copy of the parser's state machine, and returns
+// the longest prefix of b that ends in ground state, and the longest that ends
+// there right after an action HandoffPrefix counts.
+func (p *Parser) lookahead(b []byte) (ground, handoff int) {
+	m := machine{state: p.state, strRune: p.strRune, cmd: p.cmd}
+	if m.state == parser.Utf8State {
+		m.runeLen, m.runeGot = utf8ByteLen(byte(p.cmd&0xff)), p.paramsLen
+	}
+	for i, c := range b {
+		handed := m.advance(c)
+		if m.state == parser.GroundState {
+			ground = i + 1
+			if handed {
+				handoff = i + 1
+			}
+		}
+	}
+	return ground, handoff
+}
+
+// machine is the part of the parser's state that decides where its state
+// machine goes next, copied so that the lookaheads can run it without
+// touching the parser.
+type machine struct {
+	state parser.State
+	// strRune is as the parser's: the continuation bytes still owed to a
+	// rune inside a control string.
+	strRune int
+	// runeLen and runeGot are, in Utf8State, the length of the rune being
+	// collected and the bytes of it collected so far.
+	runeLen, runeGot int
+	// cmd is, in a CSI state, the command collected so far, packed as the
+	// parser packs it. Every way into a CSI clears the command, so the copy
+	// only follows what changes it inside one.
+	cmd int
+}
+
+// advance moves the machine as [Parser.Advance] moves the parser for b, and
+// reports whether the last action b caused is one HandoffPrefix counts.
+func (m *machine) advance(b byte) bool {
+	switch m.state {
+	case parser.Utf8State:
+		if b < 0x80 || b > 0xBF {
+			// As advanceUtf8: the rune is malformed, a replacement
+			// character is printed for it, and b is read afresh.
+			m.state = parser.GroundState
+			return m.advance(b)
+		}
+		if m.runeGot < utf8.UTFMax {
+			m.runeGot++
+		}
+		if m.runeGot >= m.runeLen {
+			m.state = parser.GroundState
+		}
+		return false
+	case parser.OscStringState, parser.DcsStringState,
+		parser.SosStringState, parser.PmStringState, parser.ApcStringState:
+		// As advanceStringUtf8: a rune's bytes are the string's data.
+		if m.strRune > 0 {
+			if b >= 0x80 && b <= 0xBF {
+				m.strRune--
+				return false
+			}
+			m.strRune = 0
+		}
+		if b >= 0xC2 && b <= 0xF4 {
+			m.strRune = utf8ByteLen(b) - 1
+			return false
+		}
+	}
+	return m.transition(b)
+}
+
+// transition moves the machine as [Parser.advance] moves the parser for b.
+// The parser executes the first of two ESCs where the table clears; either
+// leaves it in EscapeState, so the machine doesn't tell them apart.
+func (m *machine) transition(b byte) bool {
+	state, action := parser.Table.Transition(m.state, b)
+	handed := false
+	switch action {
+	case parser.ClearAction:
+		m.cmd = 0
+	case parser.ExecuteAction:
+		// A control executed inside a CSI replaces the command collected
+		// so far, as performAction does.
+		m.cmd = int(b)
+		handed = true
+	case parser.PrefixAction:
+		m.cmd &^= 0xff << parser.PrefixShift
+		m.cmd |= int(b) << parser.PrefixShift
+	case parser.CollectAction:
+		if state == parser.Utf8State {
+			m.runeLen, m.runeGot = utf8ByteLen(b), 1
+		} else {
+			m.cmd &^= 0xff << parser.IntermedShift
+			m.cmd |= int(b) << parser.IntermedShift
+		}
+	case parser.DispatchAction:
+		switch m.state {
+		case parser.CsiEntryState, parser.CsiParamState, parser.CsiIntermediateState:
+			// REP prints, however its command was put together.
+			handed = m.cmd|int(b) != 'b'
+		default:
+			handed = true
+		}
+	}
+	m.state = state
+	return handed
+}
+
 func utf8ByteLen(b byte) int {
 	if b <= 0b0111_1111 { // 0x00-0x7F
 		return 1
