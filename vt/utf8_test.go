@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // A combining mark belongs to the character before it, however that character
@@ -171,6 +173,55 @@ func TestClusterAcrossWrites(t *testing.T) {
 		}
 		if n := len(term.CellAt(0, 0).Content); n > maxCarriedCluster+utf8.UTFMax {
 			t.Errorf("cell content: got %d bytes, want at most %d", n, maxCarriedCluster+utf8.UTFMax)
+		}
+	})
+}
+
+// A Write that ends in a cluster with no base, dropped, carries nothing: not
+// the cluster printed before it, across whatever came between. Each input
+// split where it is ends as the same bytes in one Write, where the marks have
+// nothing to attach to and are dropped.
+func TestNoStaleClusterIsCarried(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		w, h   int
+		chunks []string
+		want   wideState
+	}{
+		{"across a BEL", 10, 1, []string{"ab\x07\u0301", "\u0301x"}, wideState{[]string{"abx"}, uv.Pos(3, 0), false}},
+		{"across an SGR", 10, 1, []string{"e\x1b[1m\u0301", "\u0301"}, wideState{[]string{"e"}, uv.Pos(1, 0), false}},
+		{"onto a cell erased since", 8, 2, []string{"e\x1b[1;1H\x1b[X\x1b[1;2H\u0301", "\u0301"}, wideState{[]string{"", ""}, uv.Pos(1, 0), false}},
+		{"onto another row's text scrolled up", 8, 2, []string{"\x1b[2;1Hq\x1b[1;1He\x1b[S\u0301", "\u0301"}, wideState{[]string{"q", ""}, uv.Pos(1, 0), false}},
+		// The undo at the last column would put back the 日 the heart
+		// wrote over, which the erase took.
+		{"onto a cell erased since at the last column", 5, 2, []string{"\x1b[?7labc日\x1b[1;5H\u2764\x1b[1;4H\x1b[41m\x1b[X\x1b[1;5H\u0301", "\ufe0f"}, wideState{[]string{"abc \u2764", ""}, uv.Pos(4, 0), false}},
+		// Joined to the "a", the ZWJs would make REP find no character
+		// to repeat.
+		{"a lone ZWJ, then REP", 8, 1, []string{"a\x1b[m\u200d", "\u200d\x1b[3b"}, wideState{[]string{"aaaa"}, uv.Pos(4, 0), false}},
+		// A zero-width space is a cluster of its own after the 日, and is
+		// dropped in the same flush that prints the 日.
+		{"a zero-width space after a printed cluster", 6, 1, []string{"日\u200b", "\u0301"}, wideState{[]string{"日"}, uv.Pos(2, 0), false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, whole := writeWide(tc.w, tc.h, strings.Join(tc.chunks, ""))
+			whole.check(t, tc.want)
+			_, split := writeWide(tc.w, tc.h, tc.chunks...)
+			split.check(t, tc.want)
+		})
+	}
+
+	// Resize carries nothing over itself, and leaves nothing a later Write
+	// could carry again.
+	t.Run("across a resize", func(t *testing.T) {
+		want := wideState{[]string{"e", ""}, uv.Pos(1, 0), false}
+		for _, chunks := range [][]string{{"\x1b[1m\u0301\u0301"}, {"\x1b[1m\u0301", "\u0301"}} {
+			e := NewEmulator(10, 2)
+			e.WriteString("e")
+			e.Resize(8, 2)
+			for _, c := range chunks {
+				e.WriteString(c)
+			}
+			wideState{[]string{rowText(e, 0), rowText(e, 1)}, e.CursorPosition(), e.PendingWrap()}.check(t, want)
 		}
 	})
 }

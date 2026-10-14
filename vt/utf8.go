@@ -59,6 +59,9 @@ func (e *Emulator) flushGrapheme() {
 	// Anything but printing between two Writes ends the cluster the first
 	// one finished with, and every sequence handler comes through here.
 	e.carry.valid = false
+	// What an earlier flush printed is not what this one ends with, so the
+	// Write that ends here must not carry it, across whatever came between.
+	e.lastCluster.valid = false
 	if len(e.grapheme) == 0 {
 		return
 	}
@@ -164,7 +167,10 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// A cluster with no base character, such as a lone ZWJ or a
 		// combining mark after a control. Stored, it would be a zero-width
 		// cell, which reads as the tail of a wide character; drop it, as a
-		// terminal with nothing to attach it to does.
+		// terminal with nothing to attach it to does. The segmenter ended
+		// the cluster printed before it here, so nothing after it joins
+		// that one either.
+		e.lastCluster.valid = false
 		return
 	}
 	awm := e.isModeSet(ansi.ModeAutoWrap)
