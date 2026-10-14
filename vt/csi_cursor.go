@@ -99,14 +99,17 @@ func (e *Emulator) setCursorPosition(x, y int) {
 // carriageReturn moves the cursor to the leftmost column. If [ansi.DECOM] is
 // set, the cursor is set to the left margin. If not, and the cursor is on or
 // to the right of the left margin, the cursor is set to the left margin.
-// Otherwise, the cursor is set to the leftmost column of the screen.
+// Otherwise, the cursor is set to the leftmost column of the screen. The row
+// stays, as xterm's CarriageReturn sets only the column.
 // This performs the same function as [ansi.CR].
 func (e *Emulator) carriageReturn() {
 	mode, ok := e.modes[ansi.DECOM]
 	margins := ok && mode.IsSet()
 	x, y := e.scr.CursorPosition()
 	if margins {
-		e.scr.setCursor(0, y, true)
+		// setCursor with margins would read y, the screen's row, as one
+		// relative to the top margin, and move the cursor down by it.
+		e.scr.setCursor(e.scr.ScrollRegion().Min.X, y, false)
 	} else if region := e.scr.ScrollRegion(); uv.Pos(x, y).In(region) {
 		e.scr.setCursor(region.Min.X, y, false)
 	} else {

@@ -70,11 +70,7 @@ var clampScenarios = []struct {
 			"ICH": 31, "DCH": 31,
 			"IL": 11, "DL": 11,
 			"SU": 16, "SD": 16,
-			"CUU": 5, "CUD": 10, "CUF": 30, "CUB": 19, "CPL": 5,
-			// CNL moves to row 9 + n, and the carriage return then reads that
-			// row as relative to the top margin, so from n = 6 it ends in the
-			// region's bottom row.
-			"CNL": 6,
+			"CUU": 5, "CUD": 10, "CUF": 30, "CUB": 19, "CNL": 10, "CPL": 5,
 			"CHT": 5,
 			"CBT": 3, // 24, 16, and 8, which is past the left margin
 		},

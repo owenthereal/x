@@ -154,3 +154,30 @@ func TestED1ErasesToTheCursor(t *testing.T) {
 		}
 	}
 }
+
+// cursor.c's CarriageReturn sets only the column (set_cur_col): under ORIGIN
+// the left margin, the screen's first column here. CursorNextLine and
+// CursorPrevLine move down or up and then call it, so they too end on the
+// row they moved to. The row is the screen's, not one relative to the top
+// margin.
+func TestCarriageReturnUnderOriginModeKeepsTheRow(t *testing.T) {
+	// The region is rows 4 to 19, and CUP 3;4 under origin mode puts the
+	// cursor at column 3 of row 6.
+	const prep = "\x1b[5;20r\x1b[?6h\x1b[3;4H"
+	for _, tc := range []struct {
+		name, seq string
+		want      uv.Position
+	}{
+		{"CR", "\r", uv.Pos(0, 6)},
+		{"CNL", "\r\x1b[E", uv.Pos(0, 7)},
+		{"CPL", "\r\x1b[F", uv.Pos(0, 5)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 24)
+			_, _ = e.WriteString(prep + tc.seq)
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
