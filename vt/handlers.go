@@ -924,7 +924,10 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 
 			width := e.Width()
 			right, _, _ := params.Param(1, width)
-			if right < 1 {
+			if right < 1 || right > width {
+				// A right margin past the screen means the last column, as
+				// in xterm. Left standing, it would take the operations
+				// that work inside the margins past the end of each row.
 				right = width
 			}
 
