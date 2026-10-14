@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
-// hugeCount is a count past anything a screen can reach. It is not 2^31-1,
-// which is x/ansi's missing-parameter sentinel (ParamMask): that reads as the
-// default count.
+// hugeCount is a count past anything a screen can reach. The parser keeps it
+// at 65,535, the largest parameter, as xterm does, which is still past
+// anything an 80x24 screen can reach.
 const hugeCount = 1_000_000_000
 
 // clampOps are the operations whose count is clamped to what they can reach,
@@ -115,8 +114,8 @@ type clampState struct {
 // runClamped feeds count of the CSI operation final to an 80x24 screen that
 // holds a different rune in every cell, after prep, with a blue pen so that
 // blank cells show which operation made them. It returns what the operation
-// left, and how long the Write took.
-func runClamped(t *testing.T, prep, final string, count int) (clampState, time.Duration) {
+// left, and the cell operations it was charged.
+func runClamped(t *testing.T, prep, final string, count int) (clampState, int) {
 	t.Helper()
 	const w, h = 80, 24
 	e := newTestTerminal(t, w, h)
@@ -128,9 +127,9 @@ func runClamped(t *testing.T, prep, final string, count int) (clampState, time.D
 	_, _ = e.WriteString("\x1b[44m" + prep)
 	e.scr.ClearTouched()
 
-	start := time.Now()
-	_, _ = e.WriteString(fmt.Sprintf("\x1b[%d%s", count, final))
-	elapsed := time.Since(start)
+	charged, _ := charges(e, func() {
+		_, _ = e.WriteString(fmt.Sprintf("\x1b[%d%s", count, final))
+	})
 
 	screen, history := snapshotRows(e)
 	return clampState{
@@ -138,7 +137,7 @@ func runClamped(t *testing.T, prep, final string, count int) (clampState, time.D
 		history:     history,
 		cursor:      e.CursorPosition(),
 		pendingWrap: e.PendingWrap(),
-	}, elapsed
+	}, charged
 }
 
 // diff describes how s differs from other, or returns "" if it doesn't.
@@ -169,9 +168,11 @@ func TestClampsAreExact(t *testing.T) {
 				t.Fatalf("%s: no reach for %s", sc.name, op.name)
 			}
 			t.Run(sc.name+"/"+op.name, func(t *testing.T) {
-				huge, elapsed := runClamped(t, sc.prep, op.final, hugeCount)
-				if elapsed >= 10*time.Millisecond {
-					t.Errorf("count %d took %v, want under 10ms", hugeCount, elapsed)
+				// The clamp bounds the work to what the screen holds: a
+				// count that did all it asks for would be charged for it.
+				huge, charged := runClamped(t, sc.prep, op.final, hugeCount)
+				if most := 4 * 80 * 24; charged > most {
+					t.Errorf("count %d: %d cell operations charged, want at most %d, four screens", hugeCount, charged, most)
 				}
 
 				// One past the reach is the smallest count that is clamped
@@ -227,6 +228,26 @@ func TestTabClampsReachTheEdge(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// xterm keeps every CSI parameter at most MAX_I_PARAM, 65,535
+// (charproc.c's CASE_ESC_DIGIT), so CASE_REP repeats at most that many
+// times: on a screen of 100,000 cells, "x" then REP 100,000 leaves 65,536
+// x's and scrolls nothing. A count too long for an int is the largest too,
+// not what its low bits make: 4,294,967,297 would be 1.
+func TestREPRepeatsAtMostTheLargestParameter(t *testing.T) {
+	for _, count := range []string{"100000", "4294967297"} {
+		t.Run(count, func(t *testing.T) {
+			e := newTestTerminal(t, 1000, 100)
+			_, _ = e.WriteString("x\x1b[" + count + "b")
+			if got, want := cellsHolding(e, "x"), 1+65535; got != want {
+				t.Errorf("x's on the screen: got = %d, want = %d", got, want)
+			}
+			if got := e.ScrollbackLen(); got != 0 {
+				t.Errorf("lines scrolled into history: got = %d, want none", got)
+			}
+		})
 	}
 }
 

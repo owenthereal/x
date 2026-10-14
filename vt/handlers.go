@@ -528,8 +528,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		return true
 	})
 
-	e.RegisterCsiHandler('H', func(params ansi.Params) bool {
-		// Cursor Position [ansi.CUP]
+	// Cursor Position [ansi.CUP], and Horizontal and Vertical Position
+	// [ansi.HVP], which xterm's CSI table makes CUP.
+	cup := func(params ansi.Params) bool {
 		width, height := e.Width(), e.Height()
 		row, _, _ := params.Param(0, 1)
 		col, _, _ := params.Param(1, 1)
@@ -543,7 +544,8 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		x := min(width-1, col-1)
 		e.setCursorPosition(x, y)
 		return true
-	})
+	}
+	e.RegisterCsiHandler('H', cup)
 
 	e.RegisterCsiHandler('I', func(params ansi.Params) bool {
 		// Cursor Horizontal Tabulation [ansi.CHT]
@@ -618,9 +620,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Insert Line [ansi.IL]
 		n, _, _ := params.Param(0, 1)
 		if e.scr.InsertLine(n) {
-			// Move the cursor to the left margin, which leaves no wrap
-			// pending, as in xterm.
-			e.scr.setCursorX(0, true)
+			// Move the cursor to the left margin, on its own row, which
+			// leaves no wrap pending, as xterm's InsertLine does.
+			e.scr.setCursorX(e.scr.ScrollRegion().Min.X)
 			e.atPhantom = false
 		}
 		return true
@@ -630,9 +632,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Delete Line [ansi.DL]
 		n, _, _ := params.Param(0, 1)
 		if e.scr.DeleteLine(n) {
-			// Move the cursor to the left margin, which leaves no wrap
-			// pending, as in xterm.
-			e.scr.setCursorX(0, true)
+			// Move the cursor to the left margin, on its own row, which
+			// leaves no wrap pending, as xterm's DeleteLine does.
+			e.scr.setCursorX(e.scr.ScrollRegion().Min.X)
 			e.atPhantom = false
 		}
 		return true
@@ -664,6 +666,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Set Tab at Every 8 Columns [ansi.DECST8C]
 		if len(params) == 1 && params[0] == 5 {
 			e.resetTabStops()
+			// xterm's CASE_DECST8C clears every stop and sets them only as
+			// far as the screen goes, so a widening adds none.
+			e.stopsCleared = true
 			return true
 		}
 		return false
@@ -687,7 +692,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Horizontal Position Absolute [ansi.HPA]
 		n, _, _ := params.Param(0, 1)
 		width := e.Width()
-		_, y := e.scr.CursorPosition()
+		_, y := e.cursorAddress()
 		e.setCursorPosition(min(width-1, n-1), y)
 		return true
 	})
@@ -696,7 +701,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Horizontal Position Relative [ansi.HPR]
 		n, _, _ := params.Param(0, 1)
 		width := e.Width()
-		x, y := e.scr.CursorPosition()
+		x, y := e.cursorAddress()
 		e.setCursorPosition(min(width-1, x+n), y)
 		return true
 	})
@@ -745,7 +750,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Vertical Position Absolute [ansi.VPA]
 		n, _, _ := params.Param(0, 1)
 		height := e.Height()
-		x, _ := e.scr.CursorPosition()
+		x, _ := e.cursorAddress()
 		e.setCursorPosition(x, min(height-1, n-1))
 		return true
 	})
@@ -754,33 +759,27 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Vertical Position Relative [ansi.VPR]
 		n, _, _ := params.Param(0, 1)
 		height := e.Height()
-		x, y := e.scr.CursorPosition()
+		x, y := e.cursorAddress()
 		e.setCursorPosition(x, min(height-1, y+n))
 		return true
 	})
 
-	e.RegisterCsiHandler('f', func(params ansi.Params) bool {
-		// Horizontal and Vertical Position [ansi.HVP]
-		width, height := e.Width(), e.Height()
-		row, _, _ := params.Param(0, 1)
-		col, _, _ := params.Param(1, 1)
-		y := min(height-1, row-1)
-		x := min(width-1, col-1)
-		e.setCursor(x, y)
-		return true
-	})
+	e.RegisterCsiHandler('f', cup)
 
 	e.RegisterCsiHandler('g', func(params ansi.Params) bool {
 		// Tab Clear [ansi.TBC]
 		value, _, _ := params.Param(0, 0)
 		switch value {
 		case 0:
-			x, _ := e.scr.CursorPosition()
-			e.tabstops.Reset(x)
+			// A screen with no columns has no stop to clear.
+			if x, _ := e.scr.CursorPosition(); e.Width() > 0 {
+				e.tabstops.Reset(x)
+			}
 		case 3:
 			// Clearing every stop is a piece of work as wide as the screen.
 			if e.meter.spend(max(e.Width(), 1)) {
 				e.tabstops.Clear()
+				e.stopsCleared = true
 			}
 		default:
 			return false

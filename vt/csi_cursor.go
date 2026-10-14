@@ -1,7 +1,6 @@
 package vt
 
 import (
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -20,11 +19,7 @@ func (e *Emulator) nextTab(n int) {
 		return
 	}
 	for range n {
-		ts := e.tabstops.Next(x)
-		if ts < x {
-			break
-		}
-		x = ts
+		x = e.nextTabStop(x)
 	}
 
 	if x >= scroll.Max.X {
@@ -34,6 +29,19 @@ func (e *Emulator) nextTab(n int) {
 	// NOTE: We use t.scr.setCursor here because we don't want to reset the
 	// phantom state.
 	e.scr.setCursor(x, y, false)
+}
+
+// nextTabStop returns the first tab stop right of column x on the screen, or
+// the last column if none is left. The stops past the screen's right edge,
+// which a narrowing keeps, are not on it, so the scan stops at the edge.
+func (e *Emulator) nextTabStop(x int) int {
+	for last := e.Width() - 1; x < last; {
+		x++
+		if e.tabstops.IsStop(x) {
+			break
+		}
+	}
+	return x
 }
 
 // prevTab moves the cursor to the previous tab stop n times. This respects the
@@ -71,7 +79,7 @@ func (e *Emulator) prevTab(n int) {
 	// phantom state. xterm's TabToPrevStop sets only the column, so a wrap
 	// pending before the tab stays, off the last column, and the next
 	// character still wraps.
-	e.scr.setCursorX(x, false)
+	e.scr.setCursorX(x)
 }
 
 // moveCursor moves the cursor by the given x and y deltas. If the cursor
@@ -96,24 +104,34 @@ func (e *Emulator) setCursorPosition(x, y int) {
 	e.atPhantom = false
 }
 
+// cursorAddress returns the cursor's position as setCursorPosition reads
+// one: relative to the top and left margins under [ansi.DECOM], as xterm's
+// CursorRow and CursorCol report it, and the screen's otherwise. HPA, HPR,
+// VPA and VPR keep one coordinate, or move from it, so they read it here
+// rather than add the margins twice.
+func (e *Emulator) cursorAddress() (x, y int) {
+	x, y = e.scr.CursorPosition()
+	if e.isModeSet(ansi.DECOM) {
+		region := e.scr.ScrollRegion()
+		x, y = x-region.Min.X, y-region.Min.Y
+	}
+	return x, y
+}
+
 // carriageReturn moves the cursor to the leftmost column. If [ansi.DECOM] is
 // set, the cursor is set to the left margin. If not, and the cursor is on or
-// to the right of the left margin, the cursor is set to the left margin.
-// Otherwise, the cursor is set to the leftmost column of the screen. The row
-// stays, as xterm's CarriageReturn sets only the column.
+// to the right of the left margin, whatever its row, the cursor is set to the
+// left margin. Otherwise, the cursor is set to the leftmost column of the
+// screen. The row stays, as xterm's CarriageReturn sets only the column.
 // This performs the same function as [ansi.CR].
 func (e *Emulator) carriageReturn() {
 	mode, ok := e.modes[ansi.DECOM]
 	margins := ok && mode.IsSet()
-	x, y := e.scr.CursorPosition()
-	if margins {
-		// setCursor with margins would read y, the screen's row, as one
-		// relative to the top margin, and move the cursor down by it.
-		e.scr.setCursor(e.scr.ScrollRegion().Min.X, y, false)
-	} else if region := e.scr.ScrollRegion(); uv.Pos(x, y).In(region) {
-		e.scr.setCursor(region.Min.X, y, false)
+	x, _ := e.scr.CursorPosition()
+	if left := e.scr.ScrollRegion().Min.X; margins || x >= left {
+		e.scr.setCursorX(left)
 	} else {
-		e.scr.setCursor(0, y, false)
+		e.scr.setCursorX(0)
 	}
 	e.atPhantom = false
 }

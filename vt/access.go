@@ -31,6 +31,12 @@ func (e *Emulator) ActiveScreen() *Screen {
 // DECSC saved alongside it in Saved. A slot no DECSC has filled reports what
 // DECRC restores from it, with Saved.Saved false: home, the default pen and
 // no link, ASCII in G0-G3, G0 in GL and G2 in GR, no origin mode and no wrap.
+//
+// The Position is the one saved, which a resize leaves as it is, so it can be
+// off the screen: DECRC clamps it as it moves there, to the screen, or under
+// the origin mode the slot holds to the bottom and right margins. Hidden,
+// Style and Steady are the cursor's when DECSC ran, and DECRC never restores
+// them.
 func (s *Screen) SavedCursor() Cursor {
 	c := s.saved
 	if !c.Saved.Saved {
@@ -132,14 +138,16 @@ func (e *Emulator) SingleShift() int {
 	return e.gsingle
 }
 
-// TabStops returns the columns that have a tab stop, ascending. The slice is
-// the caller's.
+// TabStops returns the columns of the screen that have a tab stop, ascending.
+// A narrowing keeps the stops past the new right edge, as xterm does, for a
+// widening to bring back, but they are not reported. The slice is the
+// caller's.
 func (e *Emulator) TabStops() []int {
 	// The scan is as wide as the screen, and not charged to the work meter:
 	// it runs outside Write and Resize, at the caller's pace, over a width
 	// only the caller sets.
 	var stops []int
-	for x := range e.tabstops.Width() {
+	for x := range e.Width() {
 		if e.tabstops.IsStop(x) {
 			stops = append(stops, x)
 		}

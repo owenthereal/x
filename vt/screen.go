@@ -116,13 +116,13 @@ func (s *Screen) resize(width, height, y int, history bool) bool {
 		s.buf.Touched = nil
 	}
 	*s.scroll = s.buf.Bounds()
-	// The cursor and the DECSC slot stay inside the new size, whether or not
-	// this is the active screen: a cursor off the screen drops what is
-	// printed at it. The slot is only clamped, not moved with its row: xterm
-	// moves it only by the rows a growth pulls back from history, and a
-	// growth here pulls none back.
+	// The cursor stays inside the new size, whether or not this is the
+	// active screen: a cursor off the screen drops what is printed at it.
+	// The DECSC slot keeps its position, as xterm's ScreenResize leaves it,
+	// for RestoreCursor to clamp when DECRC moves there: a shrink and a
+	// growth back bring it back where it was. xterm moves it only by the
+	// rows a growth pulls back from history, and a growth here pulls none.
 	s.cur.Position = clampToScreen(s.cur.Position, width, height)
-	s.saved.Position = clampToScreen(s.saved.Position, width, height)
 	return true
 }
 
@@ -394,10 +394,9 @@ func (s *Screen) setVerticalMargins(top, bottom int) {
 	s.scroll.Max.Y = bottom
 }
 
-// setCursorX sets the cursor X position. If margins is true, the cursor is
-// only set if it is within the scroll margins.
-func (s *Screen) setCursorX(x int, margins bool) {
-	s.setCursor(x, s.cur.Y, margins)
+// setCursorX sets the cursor X position, on the cursor's row.
+func (s *Screen) setCursorX(x int) {
+	s.setCursor(x, s.cur.Y, false)
 }
 
 // setCursor sets the cursor position. If margins is true, the cursor is only
@@ -635,8 +634,10 @@ func (s *Screen) scanCost(x, y int) int {
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
-// scrolled past the top margin are lost. This is equivalent to [ansi.SU] which
-// moves the cursor to the top margin and performs a [ansi.DL] operation.
+// scrolled past the top margin go to history when the region starts at the
+// first row and spans every column, as DeleteLine saves them, and are lost
+// otherwise. This is equivalent to [ansi.SU] which moves the cursor to the
+// top margin and performs a [ansi.DL] operation.
 func (s *Screen) ScrollUp(n int) {
 	x, y := s.CursorPosition()
 	s.setCursor(s.cur.X, 0, true)
@@ -690,8 +691,8 @@ func (s *Screen) InsertLine(n int) bool {
 // Only operates if cursor is within scroll region. Lines below cursor Y
 // are moved up, with blank lines inserted at the bottom of scroll region.
 // If scrollback is enabled and cursor is at top of a scroll region that starts
-// at the first row, lines are saved to the scrollback buffer before deletion.
-// It returns true if the operation was successful.
+// at the first row and spans every column, lines are saved to the scrollback
+// buffer before deletion. It returns true if the operation was successful.
 func (s *Screen) DeleteLine(n int) bool {
 	if n <= 0 {
 		return false

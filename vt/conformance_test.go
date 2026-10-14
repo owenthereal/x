@@ -182,6 +182,69 @@ func TestCarriageReturnUnderOriginModeKeepsTheRow(t *testing.T) {
 	}
 }
 
+// Without ORIGIN, cursor.c's CarriageReturn goes to the left margin from
+// any column on or right of it (cur_col >= left), and to column 0 only from
+// left of it: right of the right margin, or on a row outside the top and
+// bottom margins, the cursor still goes to the left margin. With DECSLRM 3;8
+// that is column 2.
+func TestCarriageReturnGoesToTheLeftMarginFromRightOfIt(t *testing.T) {
+	const margins = "\x1b[5;20r\x1b[?69h\x1b[3;8s"
+	for _, tc := range []struct {
+		name, at string
+		want     uv.Position
+	}{
+		{"inside the margins", "\x1b[7;5H", uv.Pos(2, 6)},
+		{"right of the right margin", "\x1b[7;10H", uv.Pos(2, 6)},
+		{"above the top margin", "\x1b[1;5H", uv.Pos(2, 0)},
+		{"left of the left margin", "\x1b[7;2H", uv.Pos(0, 6)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 24)
+			_, _ = e.WriteString(margins + tc.at + "\r")
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Under ORIGIN, charproc.c's CASE_HPA, CASE_HPR, CASE_VPA and CASE_VPR move
+// from cursor.c's CursorRow and CursorCol, the cursor's place relative to the
+// top and left margins (:552-573), and CursorSet adds the margins back once.
+// HVP is CASE_CUP in xterm's CSI table, so it honours origin mode too. The
+// region is rows 4 to 19, so CUP 3;4 under origin mode puts the cursor at
+// column 3 of row 6; with DECSLRM 3;8 too, at column 5.
+func TestPositionsUnderOriginModeAreInsideTheMargins(t *testing.T) {
+	const rows = "\x1b[5;20r\x1b[?6h\x1b[3;4H"
+	const both = "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[3;4H"
+	for _, tc := range []struct {
+		name, prep, seq string
+		want            uv.Position
+	}{
+		{"HPA", rows, "\x1b[5`", uv.Pos(4, 6)},
+		{"HPR", rows, "\x1b[2a", uv.Pos(5, 6)},
+		{"VPA", rows, "\x1b[2d", uv.Pos(3, 5)},
+		{"VPR", rows, "\x1b[1e", uv.Pos(3, 7)},
+		{"HVP", rows, "\x1b[2;3f", uv.Pos(2, 5)},
+		{"HPA inside left and right margins", both, "\x1b[2`", uv.Pos(3, 6)},
+		{"HPR inside left and right margins", both, "\x1b[1a", uv.Pos(6, 6)},
+		{"VPA inside left and right margins", both, "\x1b[2d", uv.Pos(5, 5)},
+		{"VPR inside left and right margins", both, "\x1b[1e", uv.Pos(5, 7)},
+		{"HVP inside left and right margins", both, "\x1b[1;1f", uv.Pos(2, 4)},
+		// CursorSet stops at the bottom and right margins.
+		{"HPA past the right margin", both, "\x1b[99`", uv.Pos(7, 6)},
+		{"VPR past the bottom margin", both, "\x1b[99e", uv.Pos(5, 19)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 24)
+			_, _ = e.WriteString(tc.prep + tc.seq)
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // charproc.c's dotext sets need_wrap when the text fills the rest of the line
 // (:7157-7158), whatever its width, and keeps it in do_wrap (:7173) whatever
 // WRAPAROUND is. The next print takes the flag (:7065-7066) and wraps only if
@@ -227,5 +290,69 @@ func TestAFullRowLeavesAWrapPendingUnderAutowrapOff(t *testing.T) {
 				t.Errorf("cursor: got = %v, want = %v", got, want)
 			}
 		})
+	}
+}
+
+// A C0 control inside a CSI is executed, and the CSI goes on: in charproc.c
+// the CSI states' tables map each C0 to the case ground state runs, and
+// CASE_VMOT (LF) and CASE_CR run IND and CarriageReturn without ResetState,
+// so the parameters and the final byte that follow make the CUP they began.
+// A CUP cut by a LF or a CR, as two processes writing one tty can leave it,
+// must not become ED 2 (0x0a|'H' is 'J') or DL (0x0d|'H' is 'M').
+func TestAControlInsideACSIRunsAndTheCSIGoesOn(t *testing.T) {
+	rows := []string{strings.Repeat("a", 10), strings.Repeat("b", 10), strings.Repeat("c", 10), strings.Repeat("d", 10)}
+	for _, tc := range []struct {
+		name, seq string
+		want      uv.Position
+	}{
+		// From row 0, the LF moves to row 1, then the CUP to row 1,
+		// column 4.
+		{"LF inside CUP", "\x1b[1;1H\x1b[2;\n5H", uv.Pos(4, 1)},
+		// From row 2, column 3, the CR moves to column 0, then the CUP
+		// home.
+		{"CR inside CUP", "\x1b[3;4H\x1b[1;\r1H", uv.Pos(0, 0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 4)
+			_, _ = e.WriteString(strings.Join(rows, "\r\n"))
+			_, _ = e.WriteString(tc.seq)
+			for y, want := range rows {
+				if got := rowText(e, y); got != want {
+					t.Errorf("row %d: got = %q, want = %q", y, got, want)
+				}
+			}
+			if got := e.ScrollbackLen(); got != 0 {
+				t.Errorf("lines in history: got = %d, want none", got)
+			}
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// util.c's InsertLine and DeleteLine set only the column, to the left margin
+// (set_cur_col(screen, ScrnLeftMargin(xw)) at :1650 and :1760), and leave
+// the row: with a region from row 4, IL and DL on row 6 leave the cursor on
+// row 6, with or without origin mode, not 4 rows below it.
+func TestInsertAndDeleteLineKeepTheRow(t *testing.T) {
+	for _, tc := range []struct {
+		name, prep string
+		want       uv.Position
+	}{
+		{"no margins but the top and bottom", "\x1b[5;20r\x1b[7;4H", uv.Pos(0, 6)},
+		// CUP 3;2 under origin mode is column 3 of row 6 on the screen.
+		{"origin mode", "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[3;2H", uv.Pos(2, 6)},
+		{"a left margin", "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[7;4H", uv.Pos(2, 6)},
+	} {
+		for _, op := range []struct{ name, seq string }{{"IL", "\x1b[L"}, {"DL", "\x1b[M"}} {
+			t.Run(tc.name+"/"+op.name, func(t *testing.T) {
+				e := newTestTerminal(t, 10, 24)
+				_, _ = e.WriteString(tc.prep + op.seq)
+				if got := e.CursorPosition(); got != tc.want {
+					t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+				}
+			})
+		}
 	}
 }

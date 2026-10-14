@@ -54,7 +54,8 @@ func TestED3ClearsOnlyHistory(t *testing.T) {
 // into history, then ED 3 clears the history, so the transcript that follows
 // is the only one there. A consumer keeping history must see the pushes before
 // the clear, and no push after it. It does so whatever the scrollback's size:
-// upterm sets it to 0, keeping history through these two functions alone.
+// a consumer can set it to 0 and keep history through these two functions
+// alone.
 func TestED2ThenED3OrderTheirCallbacks(t *testing.T) {
 	for _, size := range []int{DefaultScrollbackSize, 0} {
 		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {

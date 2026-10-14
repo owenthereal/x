@@ -83,8 +83,10 @@ func (e *Emulator) flushGrapheme() {
 	// Anything but printing between two Writes ends the cluster the first
 	// one finished with, and every sequence handler comes through here.
 	e.carry.valid = false
-	// What an earlier flush printed is not what this one ends with, so the
-	// Write that ends here must not carry it, across whatever came between.
+	// What an earlier flush printed is not what this one ends with. This is
+	// defensive: a Write carries lastCluster only after a flush that has
+	// just set it, unless the meter stopped that flush, which spends the
+	// emulator.
 	e.lastCluster.valid = false
 	if len(e.grapheme) == 0 {
 		return
@@ -177,7 +179,10 @@ func (e *Emulator) undoCluster(c clusterMark) bool {
 		// Put back what the cluster wrote over at the last column. An
 		// insert there only sets the cell, so this undoes one too. If the
 		// cell no longer holds the cluster, what it wrote over has gone
-		// with it, and the cell is blanked as anywhere else.
+		// with it, and the cell is blanked as anywhere else. Nothing
+		// written can change the cell before the mark that resumes the
+		// cluster, as anything else ends the carry; the host's SetCell
+		// between the two Writes can, which is what this guards.
 		if !e.meter.spend(len(c.under)) {
 			return false
 		}
@@ -272,8 +277,9 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	// A wide character the rest of the line can't hold isn't cut at the
 	// margin, as xterm's dotext writes a character only where it fits: under
 	// DECAWM it wraps first, leaving the last column as it was, and without,
-	// or when no line is wide enough for it, it isn't printed. Either way it
-	// leaves no wrap pending.
+	// or when no line is wide enough for it, it isn't printed. Not printed,
+	// it leaves no wrap pending; wrapped, it is printed on the next line,
+	// which leaves one if it fills that line.
 	if cell.Width > 1 && x+cell.Width > e.scr.Width() {
 		if !awm || cell.Width > e.scr.Width() {
 			e.atPhantom = false

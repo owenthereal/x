@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -25,6 +24,21 @@ func lowerMeterInterval(t testing.TB, n int) {
 	old := meterInterval
 	meterInterval = n
 	t.Cleanup(func() { meterInterval = old })
+}
+
+// charges returns the cell operations e is charged while do runs, and how
+// many times it calls the stop function, which charges sets to one that never
+// stops. Each call reports the charges since the one before; the charges
+// since the last call make up the rest.
+func charges(e *Emulator, do func()) (charged, calls int) {
+	charged = -e.meter.work
+	e.SetStopFunc(func() bool {
+		charged += e.meter.last
+		calls++
+		return false
+	})
+	do()
+	return charged + e.meter.work, calls
 }
 
 // writePattern writes a letter to every cell of e's screen, 'a'+(x+y)%26 at
@@ -121,8 +135,8 @@ func TestStopFuncStopsInsideAnErase(t *testing.T) {
 
 // With meterInterval lowered to 1,024 (each of these is smaller than the
 // default interval, so the API alone doesn't require a stop inside it): the
-// same arming, for EL across a 4,096-column row, ECH 1,000,000,000 (a full
-// row after P3's clamp), DECALN on 64x64, and DL in a region one column
+// same arming, for EL across a 4,096-column row, ECH 1,000,000,000 (clamped
+// to a full row), DECALN on 64x64, and DL in a region one column
 // narrower than a 64x64 screen: each stops with its operation part done, and
 // the delegated spans are at most 1,024 cells.
 //
@@ -333,8 +347,9 @@ func TestNoUnmeteredUltravioletCellCall(t *testing.T) {
 	}
 }
 
-// ESC[100000000b: stopped within one interval of the stop.
+// ESC[65535b, the largest count: stopped within one interval of the stop.
 func TestStopFuncStopsREP(t *testing.T) {
+	lowerMeterInterval(t, 1024)
 	const w = 80
 	e := NewEmulator(w, 24)
 	scrolled := 0
@@ -346,9 +361,7 @@ func TestStopFuncStopsREP(t *testing.T) {
 		return true
 	})
 
-	start := time.Now()
-	_, err := e.WriteString("\x1b[100000000b")
-	elapsed := time.Since(start)
+	_, err := e.WriteString("\x1b[65535b")
 	if !errors.Is(err, ErrStopped) {
 		t.Fatalf("Write: got error %v, want ErrStopped", err)
 	}
@@ -360,11 +373,10 @@ func TestStopFuncStopsREP(t *testing.T) {
 	if printed := scrolled*w + cellsHolding(e, "x"); printed > meterInterval+1 {
 		t.Errorf("%d characters printed, more than the interval of %d past the first", printed, meterInterval)
 	}
-	// The repetitions left must not go on after the stop, printing nothing:
-	// the rest of the 100,000,000 take about half a second, one interval
-	// about a millisecond.
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("Write took %v after the stop: the repetitions went on", elapsed)
+	// The repetitions left must not go on after the stop, printing nothing.
+	// Each would ask the meter for its charge again, and be turned down.
+	if e.meter.refused > 1 {
+		t.Errorf("%d charges turned down after the stop: the repetitions went on", e.meter.refused)
 	}
 }
 
@@ -445,9 +457,16 @@ func TestStopFuncCountsTheRowsAScrollMoves(t *testing.T) {
 // width, as a DCH at column 0 of a row of wide characters was while it moved
 // cells through SetCell, leaving an orphan at every other column, and as
 // prints and an ICH over orphans were. Each SetCell vt still makes is charged
-// its scan, and the shifts and the print no longer scan: the stop function
-// still comes throughout, with no more than the interval and a row's width
-// charged, and no more than 50 ms passed, between two calls.
+// its scan, and the shifts and the print no longer scan, so the stop function
+// still comes throughout.
+//
+// The count shows it, where a clock would depend on the machine's load: what
+// the operation is charged is at least the cells those scans read, and at
+// most a few rows' width more. Charged work reaches the stop function at
+// least once an interval, so it comes at least once per interval of scanning.
+// A scan left uncharged makes the charge fall short of the scans; work that
+// grows with the scans charged where nothing scans, such as a shift moving
+// cells through SetCell again, takes it past the rows' width.
 func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
 	const w = 32768
 	wide := strings.Repeat("日", w/2)
@@ -458,40 +477,47 @@ func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
 			e.SetCell(x, 0, &uv.Cell{})
 		}
 	}
+	// Writing over each orphan, from the left, SetCell reads every cell
+	// before it, all of them blank by then.
+	orphanScans := 0
+	for x := 1; x < w; x += 2 {
+		orphanScans += x
+	}
 	for _, tc := range []struct {
 		name string
 		prep func(*Emulator)
 		op   string
+		// The cells ultraviolet's SetCell reads in its scans from
+		// placeholders.
+		scans int
 	}{
-		{"DCH at column 0 of a row of wide characters", func(e *Emulator) { e.WriteString(wide) }, "\x1b[1;1H\x1b[P"},
-		{"EL over orphaned placeholders", orphans, "\x1b[1;1H\x1b[2K"},
-		// A count of the whole row moves nothing and blanks every cell.
-		{"ICH over orphaned placeholders", orphans, "\x1b[1;1H\x1b[32768@"},
-		{"prints over orphaned placeholders", orphans, "\x1b[1;1Hx\x1b[32766b"},
+		// The shift moves the cells as they are, so nothing scans.
+		{"DCH at column 0 of a row of wide characters", func(e *Emulator) { e.WriteString(wide) }, "\x1b[1;1H\x1b[P", 0},
+		{"EL over orphaned placeholders", orphans, "\x1b[1;1H\x1b[2K", orphanScans},
+		// A count of the whole row moves nothing and blanks every cell, as
+		// they are.
+		{"ICH over orphaned placeholders", orphans, "\x1b[1;1H\x1b[32768@", 0},
+		// Each print blanks the orphan it lands on before SetCell writes
+		// there.
+		{"prints over orphaned placeholders", orphans, "\x1b[1;1Hx\x1b[32766b", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(w, 1)
 			tc.prep(e)
-			var longest time.Duration
-			calls := 0
-			last := time.Now()
-			e.SetStopFunc(func() bool {
-				now := time.Now()
-				longest = max(longest, now.Sub(last))
-				last = now
-				calls++
-				if e.meter.last > meterInterval+w {
-					t.Errorf("%d cell operations charged between two calls, more than the interval of %d and a row of %d", e.meter.last, meterInterval, w)
+			charged, calls := charges(e, func() {
+				if _, err := e.WriteString(tc.op); err != nil {
+					t.Fatalf("Write: got error %v", err)
 				}
-				return false
 			})
-			if _, err := e.WriteString(tc.op); err != nil {
-				t.Fatalf("Write: got error %v", err)
+			t.Logf("%d cell operations charged, %d calls to the stop function", charged, calls)
+			if charged < tc.scans {
+				t.Errorf("%d cell operations charged, fewer than the %d cells SetCell's scans read: the scans went uncharged", charged, tc.scans)
 			}
-			longest = max(longest, time.Since(last))
-			t.Logf("%d calls to the stop function, at most %v apart", calls, longest)
-			if longest > 50*time.Millisecond {
-				t.Errorf("%v between two calls to the stop function: the scans went uncharged", longest)
+			if most := tc.scans + 4*w; charged > most {
+				t.Errorf("%d cell operations charged, more than the %d cells SetCell's scans read and four rows of %d", charged, tc.scans, w)
+			}
+			if least := tc.scans / meterInterval; calls < least {
+				t.Errorf("stop function calls: got = %d, want at least %d, one per interval of the scans", calls, least)
 			}
 		})
 	}
@@ -697,14 +723,24 @@ func FuzzMeterInterval(f *testing.F) {
 			}
 			writes = takeCellWrites(scrs...)
 		}
+		// With no stop asked for, an input is bounded all the same: a REP
+		// prints up to 65,535 characters, and an input can hold many. Past
+		// maxCalls calls, about a quarter of a million cell operations at
+		// this interval, the Write stops and the input is skipped, with the
+		// interval checked up to there, rather than left to run past the
+		// fuzzer's time limit.
+		const maxCalls = 1024
 		calls := 0
 		e.SetStopFunc(func() bool {
 			check(e.meter.last)
 			calls++
-			return calls == int(stopAt)
+			return calls == int(stopAt) || calls > maxCalls
 		})
 
 		n, err := e.Write(p)
+		if calls > maxCalls {
+			t.Skip("more work than the fuzz allows an input")
+		}
 		if stopAt > 0 && calls == int(stopAt) {
 			if !errors.Is(err, ErrStopped) || n > len(p) {
 				t.Fatalf("Write after the stop function returned true: got (%d, %v), want at most %d bytes and ErrStopped", n, err, len(p))

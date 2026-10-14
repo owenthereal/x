@@ -207,24 +207,99 @@ func TestAltScreenHeightShrinkKeepsTheCursorLine(t *testing.T) {
 	}
 }
 
-// A height shrink only clamps the DECSC slot; it does not move it with the
-// rows that went into history. xterm moves a saved cursor only for the main
-// screen while the alternate one shows, and only by the rows a growth pulls
-// back from history (AdjustSavedCursor, cursor.c, called from ScreenResize);
-// a growth here pulls none back.
-func TestHeightShrinkClampsTheSavedCursor(t *testing.T) {
-	e := NewEmulator(10, 6)
-	e.WriteString("r0\r\nr1\r\nr2\r\nr3\r\nr4\x1b7\r\nr5")
-	e.Resize(10, 3)
-	e.WriteString("\x1b8")
-
-	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
-		t.Errorf("cursor after DECRC: got = %v, want = %v, the slot's row 4 clamped", got, want)
+// xterm keeps its tab stops in a bitmap wider than any screen (Tabs,
+// ptyx.h:3626-3629), which only TabReset, at start-up and on RIS
+// (charproc.c:12722, :14449), sets back to a stop every 8 columns. A resize
+// leaves it: a stop keeps through a narrowing that hides it and the widening
+// that shows it again, and a column no screen has had yet holds the default
+// stop, unless TBC 3 (TabZonk) or DECST8C, which sets stops only as far as
+// the screen goes (CASE_DECST8C, charproc.c:5890-5900), cleared them all.
+// TabStops reports the stops on the screen.
+func TestAResizeKeepsTheTabStops(t *testing.T) {
+	// The stops HT reaches from column 0, to the last column.
+	tabs := func(e *Emulator) []int {
+		var got []int
+		e.WriteString("\x1b[1;1H")
+		for x := 0; x < e.Width()-1; x = e.CursorPosition().X {
+			e.WriteString("\t")
+			got = append(got, e.CursorPosition().X)
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		name   string
+		width  int
+		prep   string
+		resize [][2]int
+		want   []int
+		// What HT reaches from column 0.
+		reached []int
+	}{
+		{"custom stops through a narrowing", 40, "\x1b[3g\x1b[1;6H\x1bH\x1b[1;31H\x1bH", [][2]int{{20, 4}}, []int{5}, []int{5, 19}},
+		{"custom stops through a narrowing and a widening", 40, "\x1b[3g\x1b[1;6H\x1bH\x1b[1;31H\x1bH", [][2]int{{20, 4}, {40, 4}}, []int{5, 30}, []int{5, 30, 39}},
+		{"custom stops through a height change", 40, "\x1b[3g\x1b[1;5H\x1bH\x1b[1;9H\x1bH\x1b[1;13H\x1bH", [][2]int{{40, 3}}, []int{4, 8, 12}, []int{4, 8, 12, 39}},
+		{"the default stops through a widening", 20, "", [][2]int{{40, 4}}, []int{0, 8, 16, 24, 32}, []int{8, 16, 24, 32, 39}},
+		{"no stops through a widening, after TBC 3", 20, "\x1b[3g", [][2]int{{40, 4}}, nil, []int{39}},
+		{"no new stops through a widening, after DECST8C", 20, "\x1b[3g\x1b[?5W", [][2]int{{40, 4}}, []int{0, 8, 16}, []int{8, 16, 39}},
+		{"custom stops through a narrowing, then the default ones past them", 40, "\x1b[1;6H\x1bH", [][2]int{{20, 4}, {48, 4}}, []int{0, 5, 8, 16, 24, 32, 40}, []int{5, 8, 16, 24, 32, 40, 47}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(tc.width, 4)
+			e.WriteString(tc.prep)
+			for _, size := range tc.resize {
+				e.Resize(size[0], size[1])
+			}
+			if got := e.TabStops(); !slices.Equal(got, tc.want) {
+				t.Errorf("TabStops: got = %v, want = %v", got, tc.want)
+			}
+			if got := tabs(e); !slices.Equal(got, tc.reached) {
+				t.Errorf("columns HT reaches: got = %v, want = %v", got, tc.reached)
+			}
+		})
 	}
 }
 
-// A width change truncates each row (D5) and a growth adds blank cells, not
-// zero ones, which would read as the tails of wide characters.
+// A resize leaves the DECSC slot where it was, as xterm's ScreenResize
+// (screen.c:2217) does: it moves a saved cursor only for the main screen
+// while the alternate one shows, and only by the rows a growth pulls back
+// from history (AdjustSavedCursor), which a growth here pulls none of. DECRC
+// clamps the position to the screen as it moves there (CursorRestoreFlags'
+// CursorSet, cursor.c:484-493). So a slot saved at column 7 of row 20 on
+// 10x24 comes back clamped after a shrink to 5x10, and where it was after a
+// shrink and a growth back to 10x24, through DECRC and through ?1049l.
+func TestAResizeKeepsTheSavedCursor(t *testing.T) {
+	for _, tc := range []struct{ name, save, restore string }{
+		{"DECSC and DECRC", "\x1b7", "\x1b8"},
+		{"?1049h and ?1049l", "\x1b[?1049h", "\x1b[?1049l"},
+	} {
+		for _, sizes := range []struct {
+			name  string
+			sizes [][2]int
+			want  uv.Position
+		}{
+			{"after a shrink", [][2]int{{5, 10}}, uv.Pos(4, 9)},
+			{"after a shrink and a growth", [][2]int{{5, 10}, {10, 24}}, uv.Pos(7, 20)},
+		} {
+			t.Run(tc.name+"/"+sizes.name, func(t *testing.T) {
+				e := NewEmulator(10, 24)
+				e.WriteString("\x1b[21;8H" + tc.save)
+				for _, size := range sizes.sizes {
+					e.Resize(size[0], size[1])
+				}
+				if got, want := e.MainScreen().SavedCursor().Position, uv.Pos(7, 20); got != want {
+					t.Errorf("the slot before the restore: got = %v, want = %v", got, want)
+				}
+				e.WriteString(tc.restore)
+				if got := e.CursorPosition(); got != sizes.want {
+					t.Errorf("cursor after %q: got = %v, want = %v", tc.restore, got, sizes.want)
+				}
+			})
+		}
+	}
+}
+
+// A width change truncates each row, and a growth adds blank cells, not zero
+// ones, which would read as the tails of wide characters.
 func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 	e := NewEmulator(6, 2)
 	e.WriteString("abcdef\r\nghijkl")
@@ -461,5 +536,37 @@ func TestResizeToNoRowsOrColumns(t *testing.T) {
 				t.Errorf("history: got = %q and scroll-off %q, want none", lineTexts(e.Scrollback().Lines()), off)
 			}
 		})
+	}
+}
+
+// A screen with no columns has no column for a tab stop to be set or cleared
+// at: HTS, as ESC H and as C1, and TBC 0 do nothing there, on a screen made
+// with none and on one resized to none, rather than index past the stops.
+func TestTabStopsOnAScreenWithNoColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func() *Emulator
+	}{
+		{"made with no columns", func() *Emulator { return NewEmulator(0, 3) }},
+		{"resized to no columns", func() *Emulator {
+			e := NewEmulator(10, 3)
+			e.Resize(0, 3)
+			return e
+		}},
+	} {
+		for _, seq := range []string{"\x1bH", "\x88", "\x1b[g", "\x1b[0g"} {
+			t.Run(fmt.Sprintf("%s/%q", tc.name, seq), func(t *testing.T) {
+				e := tc.make()
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("%q panicked: %v", seq, r)
+					}
+				}()
+				e.WriteString(seq)
+				if got := e.TabStops(); len(got) != 0 {
+					t.Errorf("TabStops: got = %v, want none", got)
+				}
+			})
+		}
 	}
 }

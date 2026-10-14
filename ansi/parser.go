@@ -321,7 +321,13 @@ func (p *Parser) performAction(action parser.Action, state parser.State, b byte)
 		}
 
 	case parser.ExecuteAction:
-		p.cmd = int(b)
+		// A control inside an escape sequence or a CSI is executed at once,
+		// and the sequence goes on, as in xterm, so the command collected so
+		// far stays for the final byte to complete. Only one that leaves the
+		// parser in ground state is the last thing dispatched.
+		if state == parser.GroundState {
+			p.cmd = int(b)
+		}
 		if p.handler.Execute != nil {
 			p.handler.Execute(b)
 		}
@@ -355,8 +361,10 @@ func (p *Parser) performAction(action parser.Action, state parser.State, b byte)
 				p.params[p.paramsLen] = 0
 			}
 
-			p.params[p.paramsLen] *= 10
-			p.params[p.paramsLen] += int(b - '0')
+			// A parameter stays at MaxParam once it gets there, as xterm's
+			// stays at MAX_I_PARAM, rather than overflowing the int and
+			// leaving whatever its low bits make.
+			p.params[p.paramsLen] = min(p.params[p.paramsLen]*10+int(b-'0'), parser.MaxParam)
 		}
 
 		if b == ':' {
@@ -562,9 +570,8 @@ func (m *machine) transition(b byte) bool {
 	case parser.ClearAction:
 		m.cmd = 0
 	case parser.ExecuteAction:
-		// A control executed inside a CSI replaces the command collected
-		// so far, as performAction does.
-		m.cmd = int(b)
+		// A control executed inside a CSI leaves the command collected so
+		// far, as performAction does.
 		handed = true
 	case parser.PrefixAction:
 		m.cmd &^= 0xff << parser.PrefixShift

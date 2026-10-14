@@ -92,10 +92,12 @@ var lookaheadSeeds = []struct{ pre, b string }{
 	{"", "\x1bXa\x1a\x1b^b\x18\x1b_c\x85"},
 	{"", "e\x1b[$1\x1b[1\x18\x1b\x1b\x1bc"},
 	{"", "x\x1b[b\x1b[?b\x1b[\x02`\x1b[3 b"},
+	{"", "x\x1b[2\nb"},
 	{"", "\xe2\r\xe2x\xe2\x1b[m\x80\xa0\xff\xc0"},
 	{"\x1b[1", ";2H"},
 	{"\x1b[?", "b"},
 	{"\x1b[\x02", "`"},
+	{"\x1b[2\n", "b"},
 	{"\xe2\x9c", "\xb3"},
 	{"\xf0\x9f", "\x98x"},
 	{"\x1b]0;\xe2", "\x9c\xb3\x07"},
@@ -201,14 +203,16 @@ func TestLookaheadCases(t *testing.T) {
 		{"CSI b with an intermediate is not REP", "", "x\x1b[ b", 5, 5},
 		{"ESC b is not REP", "", "x\x1bb", 3, 3},
 		{"OSC 98 is not REP", "", "x\x1b]98\x07", 6, 6},
-		// A C0 executed inside a CSI replaces the command collected so
-		// far with the C0 byte, and the final byte is ORed into it: STX
-		// then '`' dispatches 0x02|0x60, which is 'b'.
-		{"a C0 inside a CSI that makes it REP", "", "x\x1b[\x02`", 5, 0},
+		// A C0 executed inside a CSI leaves the command collected so far:
+		// STX then '`' dispatches HPA, not 0x02|0x60, which is 'b', and
+		// LF then 'b' is still REP.
+		{"a C0 inside a CSI keeps its command", "", "x\x1b[\x02`", 5, 5},
+		{"a C0 inside REP keeps it REP", "", "x\x1b[2\nb", 6, 0},
 		// Continuing from where the parser is.
 		{"the rest of a CSI", "\x1b[1", ";2H", 3, 3},
 		{"the rest of a CSI with a prefix", "\x1b[?", "b", 1, 1},
-		{"the rest of a CSI the C0 made REP", "\x1b[\x02", "`", 1, 0},
+		{"the rest of a CSI with a C0 inside", "\x1b[\x02", "`", 1, 1},
+		{"the rest of REP with a C0 inside", "\x1b[2\n", "b", 1, 0},
 		{"the rest of a rune", "\xe2\x9c", "\xb3", 1, 0},
 		{"a rune cut short", "\xf0\x9f", "\x98x", 2, 0},
 		{"the rest of a rune inside an OSC", "\x1b]0;\xe2", "\x9c\xb3\x07", 3, 3},

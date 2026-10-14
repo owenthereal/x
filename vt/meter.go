@@ -7,11 +7,15 @@ package vt
 // byte parsed. It charges a piece of work before doing it, and the stop
 // function is called before a piece that would take the count since the last
 // call past meterInterval. Pieces are cut to at most meterInterval, so that
-// is the most work done between two calls, except for the pieces handed over
-// whole (a line to history, a row of tab stops, a SetCell's scan from a
+// is the most work charged between two calls, except for the pieces handed
+// over whole (a line to history, a row of tab stops, a SetCell's scan from a
 // placeholder, the scan for a wide character a shift or a print cuts), which
 // are larger only on a screen more than MeterInterval columns wide, or with a
-// scrollback longer than that.
+// scrollback longer than that. The work done between two calls can be more:
+// a fill or a run of SetCells charges a span before writing it, and each
+// placeholder's scan inside it as it comes, so a scan that brings a call
+// leaves the rest of a span already charged to be written after it. Around
+// placeholders that is up to about twice the interval.
 //
 // A check around a call into ultraviolet bounds nothing inside the call, so
 // each call vt makes is bounded here: by the cells it is given, which the
@@ -50,12 +54,13 @@ package vt
 //	(*uv.TabStops).Set                 anywhere: a constant
 //	(*uv.TabStops).Reset               anywhere: a constant
 //	uv.ReadStyle                       Emulator.handleSgr: the SGR's parameters, which the parser bounds
-//	(uv.TabStops).Next                 Emulator.nextTab: whole, charged with the columns right of the cursor
 //	(uv.TabStops).Prev                 Emulator.prevTab: whole, charged with the columns left of the cursor
+//	(uv.TabStops).IsStop               Emulator.nextTabStop: once per column, which nextTab charges with the columns right of the cursor
 //	(uv.TabStops).IsStop               Emulator.TabStops: once per column, outside Write and Resize
-//	(*uv.TabStops).Width               Emulator.TabStops: a constant
+//	(*uv.TabStops).Width               Emulator.widenTabStops: a constant
 //	(*uv.TabStops).Clear               Emulator.registerDefaultCsiHandlers: whole, charged with the width (TBC 3)
-//	uv.DefaultTabStops                 NewEmulator, Emulator.Resize, Emulator.resetTabStops: whole, charged with the width, outside Write in NewEmulator
+//	(*uv.TabStops).Resize              Emulator.widenTabStops: whole, at most the new width, which Emulator.Resize charges
+//	uv.DefaultTabStops                 NewEmulator, Emulator.resetTabStops: whole, charged with the width, outside Write in NewEmulator
 //	uv.NewRenderBuffer                 NewScreen, Screen.resize: outside the meter, for a screen built from nothing, which no emulator's is once made
 //	(*uv.Buffer).Render                Emulator.Render: outside Write and Resize
 //	(*uv.Buffer).String                Emulator.String: outside Write and Resize
@@ -129,6 +134,10 @@ type meter struct {
 	// last is the work done between the last two calls to stop, which the
 	// tests read.
 	last int
+	// refused counts the charges turned down once stop has returned true,
+	// which the tests read: an operation that goes on asking is spinning
+	// through the work the stop was meant to end.
+	refused int
 }
 
 // spend charges n cell operations the caller is about to do, and reports
@@ -143,6 +152,7 @@ func (m *meter) spend(n int) bool {
 func (m *meter) check(n int) bool {
 	if m.work >= spentWork {
 		m.work = spentWork
+		m.refused++
 		return false
 	}
 	m.last = m.work - n
