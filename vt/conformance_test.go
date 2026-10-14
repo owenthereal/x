@@ -229,3 +229,41 @@ func TestAFullRowLeavesAWrapPendingUnderAutowrapOff(t *testing.T) {
 		})
 	}
 }
+
+// A C0 control inside a CSI is executed, and the CSI goes on: in charproc.c
+// the CSI states' tables map each C0 to the case ground state runs, and
+// CASE_VMOT (LF) and CASE_CR run IND and CarriageReturn without ResetState,
+// so the parameters and the final byte that follow make the CUP they began.
+// A CUP cut by a LF or a CR, as two processes writing one tty can leave it,
+// must not become ED 2 (0x0a|'H' is 'J') or DL (0x0d|'H' is 'M').
+func TestAControlInsideACSIRunsAndTheCSIGoesOn(t *testing.T) {
+	rows := []string{strings.Repeat("a", 10), strings.Repeat("b", 10), strings.Repeat("c", 10), strings.Repeat("d", 10)}
+	for _, tc := range []struct {
+		name, seq string
+		want      uv.Position
+	}{
+		// From row 0, the LF moves to row 1, then the CUP to row 1,
+		// column 4.
+		{"LF inside CUP", "\x1b[1;1H\x1b[2;\n5H", uv.Pos(4, 1)},
+		// From row 2, column 3, the CR moves to column 0, then the CUP
+		// home.
+		{"CR inside CUP", "\x1b[3;4H\x1b[1;\r1H", uv.Pos(0, 0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 4)
+			_, _ = e.WriteString(strings.Join(rows, "\r\n"))
+			_, _ = e.WriteString(tc.seq)
+			for y, want := range rows {
+				if got := rowText(e, y); got != want {
+					t.Errorf("row %d: got = %q, want = %q", y, got, want)
+				}
+			}
+			if got := e.ScrollbackLen(); got != 0 {
+				t.Errorf("lines in history: got = %d, want none", got)
+			}
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
