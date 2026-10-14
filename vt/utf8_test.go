@@ -414,6 +414,11 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		{5, 2, []string{"\x1b[?7l\x1b[4habcdX", "\u2764", "\ufe0f"}},
 		{5, 2, []string{"abc日\x1b[1;5H", "\u2764", "\ufe0f"}},
 		{5, 2, []string{"\x1b[?7labcdX\x1b[1;5H\u2764\x1b[1;5H\x1b[1K\u0301", "\ufe0f"}},
+		// TestTheCarriedUndoRestoresWideCharacters.
+		{8, 2, []string{"日本xy\x1b[1;1H\x1b[4h", "\U0001F468\u200d", "\U0001F469"}},
+		{7, 2, []string{"ab日本\x1b[1;1H\x1b[4h", "\U0001F468\u200d", "\U0001F469"}},
+		{6, 2, []string{"a日b\x1b[1;3H\x1b[4h", "\u2764", "\ufe0f"}},
+		{5, 2, []string{"abc日\x1b[1;5H\x1b[4h", "\u2764", "\ufe0f"}},
 		// TestLastCharSurvivesASplitCluster.
 		{10, 2, []string{"ae", "\u0301", "\x1b[b"}},
 		{10, 2, []string{"ae", "\u0301\x1b[b"}},

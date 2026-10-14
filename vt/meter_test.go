@@ -441,13 +441,13 @@ func TestStopFuncCountsTheRowsAScrollMoves(t *testing.T) {
 
 // ultraviolet's SetCell, writing over a wide character's placeholder, scans
 // back toward column 0 for the character it belongs to, and finds none once
-// that character is gone. Its DeleteCellArea's order of moves, which DCH
-// keeps, leaves such orphans at every other column and then writes over
-// them, so one DCH at column 0 of a row of wide characters is quadratic in
-// the width; so are a fill and prints over orphans. Each such SetCell is
-// charged its scan: the stop function still comes throughout, with no more
-// than the interval and a row's width charged, and no more than 50 ms passed,
-// between two calls.
+// that character is gone. So a fill over such orphans is quadratic in the
+// width, as a DCH at column 0 of a row of wide characters was while it moved
+// cells through SetCell, leaving an orphan at every other column, and as
+// prints and an ICH over orphans were. Each SetCell vt still makes is charged
+// its scan, and the shifts and the print no longer scan: the stop function
+// still comes throughout, with no more than the interval and a row's width
+// charged, and no more than 50 ms passed, between two calls.
 func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
 	const w = 32768
 	wide := strings.Repeat("日", w/2)
@@ -542,12 +542,11 @@ func TestAStopInsideAResizeSpendsTheEmulator(t *testing.T) {
 	_ = e.Render()
 }
 
-// insertCellArea, deleteCellArea, shiftRowsDown, shiftRowsUp, fillArea and
-// clearCells do what ultraviolet's InsertCellArea, DeleteCellArea,
+// shiftRowsDown, shiftRowsUp, fillArea and clearCells do what ultraviolet's
 // InsertLineArea, DeleteLineArea, FillArea and Clear do, cell for cell and
 // touch for touch, whatever spans the meter cuts them into: rows of wide and
-// narrow characters, shifts inside and outside the area, with and without a
-// blank cell.
+// narrow characters, with and without a blank cell. (The cell shifts don't
+// follow ultraviolet's: TestRowShiftsMatchTheirModel.)
 func TestMeteredShiftsMatchUltraviolet(t *testing.T) {
 	lowerMeterInterval(t, 3)
 	const w, h = 12, 6
@@ -582,34 +581,25 @@ func TestMeteredShiftsMatchUltraviolet(t *testing.T) {
 			c = &blank
 		case 1:
 			// Only a fill is ever given a wide cell.
-			if i%6 == 4 {
+			if i%4 == 2 {
 				c = &wide
 			}
 		}
 		x0, x1 := rnd.IntN(w), rnd.IntN(w+1)
 		y0, y1 := rnd.IntN(h), rnd.IntN(h+1)
 		area := uv.Rect(min(x0, x1), min(y0, y1), max(x0, x1)-min(x0, x1), max(y0, y1)-min(y0, y1))
-		x, y, n := rnd.IntN(w+2)-1, rnd.IntN(h+2)-1, rnd.IntN(w+2)-1
 		var op string
-		switch i % 6 {
-		case 0:
-			op = fmt.Sprintf("InsertCellArea(%d, %d, %d, %v)", x, y, n, area)
-			want.buf.InsertCellArea(x, y, n, c, area)
-			got.insertCellArea(x, y, n, c, area)
-		case 1:
-			op = fmt.Sprintf("DeleteCellArea(%d, %d, %d, %v)", x, y, n, area)
-			want.buf.DeleteCellArea(x, y, n, c, area)
-			got.deleteCellArea(x, y, n, c, area)
-		case 2, 3:
+		switch i % 4 {
+		case 0, 1:
 			// The line shifts' callers clamp n and keep y inside the area,
 			// as InsertLine and DeleteLine do.
 			if area.Empty() {
 				continue
 			}
-			y = area.Min.Y + rnd.IntN(area.Dy())
-			n = 1 + rnd.IntN(area.Max.Y-y)
+			y := area.Min.Y + rnd.IntN(area.Dy())
+			n := 1 + rnd.IntN(area.Max.Y-y)
 			*got.scroll = area
-			if i%6 == 2 {
+			if i%4 == 0 {
 				op = fmt.Sprintf("InsertLineArea(%d, %d, %v)", y, n, area)
 				want.buf.InsertLineArea(y, n, c, area)
 				got.shiftRowsDown(y, n, c)
@@ -618,7 +608,7 @@ func TestMeteredShiftsMatchUltraviolet(t *testing.T) {
 				want.buf.DeleteLineArea(y, n, c, area)
 				got.shiftRowsUp(y, n, c)
 			}
-		case 4:
+		case 2:
 			// Screen.FillArea before the meter: ultraviolet's fill, then a
 			// touch of every row of the area.
 			area = area.Add(uv.Pos(rnd.IntN(5)-2, rnd.IntN(5)-2))
@@ -628,7 +618,7 @@ func TestMeteredShiftsMatchUltraviolet(t *testing.T) {
 				want.buf.TouchLine(area.Min.X, y, area.Dx())
 			}
 			got.fillArea(c, area)
-		case 5:
+		case 3:
 			op = "Clear()"
 			want.buf.Clear()
 			got.clearCells()

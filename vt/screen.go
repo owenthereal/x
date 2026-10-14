@@ -508,104 +508,44 @@ func (s *Screen) HideCursor() {
 	s.setCursorHidden(true)
 }
 
-// InsertCell inserts n blank characters at the cursor position pushing out
-// cells to the right and out of the screen.
+// InsertCell inserts n blank characters at the cursor position, pushing the
+// cells after it right, and those pushed past the right margin out. This has
+// no effect if the cursor is outside the left and right margins; the top and
+// bottom ones don't apply. A wide character the shift would cut is blanked
+// (see shift.go).
 func (s *Screen) InsertCell(n int) {
-	if n <= 0 {
-		return
-	}
-
-	x, y := s.cur.X, s.cur.Y
-	// Cells pushed past the right margin are lost, so a count past the
-	// distance to it inserts no more. Outside the margins nothing is inserted,
-	// whatever the count.
-	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.insertCellArea(x, y, n, s.blankCell(), *s.scroll)
+	s.insertCells(s.cur.X, s.cur.Y, n)
 }
 
-// DeleteCell deletes n cells at the cursor position moving cells to the left.
-// This has no effect if the cursor is outside the scroll region.
+// DeleteCell deletes n cells at the cursor position, moving the cells after
+// them left, up to the right margin. This has no effect if the cursor is
+// outside the left and right margins; the top and bottom ones don't apply. A
+// wide character the shift would cut is blanked (see shift.go).
 func (s *Screen) DeleteCell(n int) {
-	if n <= 0 {
-		return
-	}
-
-	x, y := s.cur.X, s.cur.Y
-	// Cells are deleted up to the right margin, so a count past the distance
-	// to it deletes no more. Outside the margins nothing is deleted, whatever
-	// the count.
-	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.deleteCellArea(x, y, n, s.blankCell(), *s.scroll)
+	s.deleteCells(s.cur.X, s.cur.Y, n)
 }
 
-// insertCellArea inserts n cells set to c at x on row y, within area, as
-// [uv.RenderBuffer.InsertCellArea] does: the cells from x move right, and
-// those pushed past the area's right edge are lost. It reports false if the
-// meter stopped it.
-//
-// It moves a metered span at a time, from the right end, so each span's
-// source is left of every cell moved yet; and it sets the cells opened as
-// ultraviolet does, through SetCell. ultraviolet's own call can't be split by
-// columns and come out the same, since its SetCell mends a wide character
-// across the split.
-func (s *Screen) insertCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool {
-	if s.inCellArea(x, y, n, area) {
-		line := s.buf.Lines[y]
-		m := min(n, area.Max.X-x)
-		for hi := area.Max.X; hi > x+m; {
-			lo := max(hi-meterInterval, x+m)
-			if !s.meter.spend(hi - lo) {
-				return false
-			}
-			copy(line[lo:hi], line[lo-m:hi-m])
-			hi = lo
-		}
-		if !s.setCells(x, x+m, y, c) {
-			return false
-		}
+// printCell writes c, a printed character, at column x of row y, as xterm's
+// WriteText does: a wide character c writes over part of, on either side, is
+// blanked first (DamagedCurCells and ClearInLine), so no half of one is left
+// apart from the other, and SetCell never writes over a placeholder. It
+// charges c's cells, and reports false if the meter stopped it. The caller
+// makes sure c fits the row.
+func (s *Screen) printCell(x, y int, c *uv.Cell) bool {
+	// blankCut at either edge, spelled out so that its test inlines in a
+	// call every print makes.
+	line := s.buf.Line(y)
+	if cuts(line, x) && !s.blankWide(line, x, y) {
+		return false
 	}
-	if x+n > area.Max.X {
-		n = area.Max.X - x
+	if end := x + c.Width; cuts(line, end) && !s.blankWide(line, end, y) {
+		return false
 	}
-	s.buf.TouchLine(x, y, n)
+	if !s.meter.spend(c.Width) {
+		return false
+	}
+	s.SetCell(x, y, c)
 	return true
-}
-
-// deleteCellArea deletes n cells at x on row y, within area, and sets the
-// cells opened at the area's right edge to c, as
-// [uv.RenderBuffer.DeleteCellArea] does: each cell moves through SetCell, a
-// metered span at a time. It reports false if the meter stopped it.
-//
-// That order of moves leaves an orphaned placeholder at every other column of
-// a row of wide characters, which the next move's SetCell scans back from:
-// the charges for those scans keep the stop function coming.
-func (s *Screen) deleteCellArea(x, y, n int, c *uv.Cell, area uv.Rectangle) bool {
-	if s.inCellArea(x, y, n, area) {
-		m := min(n, area.Max.X-x)
-		if !s.meter.spans(x, area.Max.X-m, func(lo, hi int) {
-			for i := lo; i < hi && s.chargeScan(i, y); i++ {
-				s.buf.Buffer.SetCell(i, y, s.buf.CellAt(i+m, y))
-			}
-		}) {
-			return false
-		}
-		if !s.setCells(area.Max.X-m, area.Max.X, y, c) {
-			return false
-		}
-	}
-	if remaining := area.Max.X - x; n > remaining {
-		n = remaining
-	}
-	s.buf.TouchLine(x, y, n)
-	return true
-}
-
-// inCellArea reports whether a shift of n cells at x on row y, within area,
-// moves anything: the test [uv.Buffer.InsertCellArea] and
-// [uv.Buffer.DeleteCellArea] make first.
-func (s *Screen) inCellArea(x, y, n int, area uv.Rectangle) bool {
-	return n > 0 && y >= area.Min.Y && y < area.Max.Y && y < s.buf.Height() &&
-		x >= area.Min.X && x < area.Max.X && x < s.buf.Width()
 }
 
 // setCells sets cells [from, to) of row y to c through ultraviolet's SetCell,

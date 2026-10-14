@@ -183,8 +183,13 @@ func (e *Emulator) undoCluster(c clusterMark) bool {
 		}
 		e.scr.putCells(c.x+1-len(c.under), c.y, c.under)
 	case e.insertMode:
-		// Undo the insert that made room for it.
-		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), *e.scr.scroll) {
+		// Undo the insert that made room for it. The delete moves back
+		// whole the wide characters the insert pushed along. One the insert
+		// blanked, cut where the cluster went or at the right margin, stays
+		// blank: the cluster's print blanks it or pushes it out again, as in
+		// one Write, since extended, a cluster is never narrower (its width
+		// is its first character's, widened by a VS16).
+		if !e.scr.deleteCells(c.x, c.y, c.width) {
 			return false
 		}
 	default:
@@ -292,7 +297,8 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 
 	// Keep what a print at the last column writes over, for the carried
 	// cluster's undo (see clusterMark): the last column, and the first half
-	// of a wide character it holds the second half of, which SetCell blanks.
+	// of a wide character it holds the second half of, which the print, or
+	// the insert before it, blanks.
 	var under []uv.Cell
 	if x == e.scr.Width()-1 {
 		from := x
@@ -304,17 +310,15 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 
 	if e.insertMode {
 		// IRM: shift the rest of the line right to make room.
-		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), *e.scr.scroll) {
+		if !e.scr.insertCells(x, y, cell.Width) {
 			return
 		}
 	}
-	// The cells the print writes, charged once the wrap and the insert have
-	// charged their own work, with SetCell's scan back from a placeholder it
-	// writes over.
-	if !e.meter.spend(cell.Width + e.scr.scanCost(x, y)) {
+	// The cell, charged once the wrap and the insert have charged their own
+	// work.
+	if !e.scr.printCell(x, y, &cell) {
 		return
 	}
-	e.scr.SetCell(x, y, &cell)
 	cx, cy := x, y
 
 	// A character that reaches the last column leaves the wrap pending, as

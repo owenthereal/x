@@ -9,8 +9,9 @@ package vt
 // call past meterInterval. Pieces are cut to at most meterInterval, so that
 // is the most work done between two calls, except for the pieces handed over
 // whole (a line to history, a row of tab stops, a SetCell's scan from a
-// placeholder), which are larger only on a screen more than MeterInterval
-// columns wide, or with a scrollback longer than that.
+// placeholder, the scan for a wide character a shift or a print cuts), which
+// are larger only on a screen more than MeterInterval columns wide, or with a
+// scrollback longer than that.
 //
 // A check around a call into ultraviolet bounds nothing inside the call, so
 // each call vt makes is bounded here: by the cells it is given, which the
@@ -21,14 +22,17 @@ package vt
 //
 // SetCell is one cell of work, except over a wide character's placeholder:
 // there it scans back toward column 0 for the character the placeholder
-// belongs to, and on to column 0 when that character is gone, as DCH's moves
-// leave it at every other column of a row of wide characters. So before each
-// SetCell vt makes in Write or Resize, Screen.chargeScan charges a placeholder
-// target its column plus one, the most that scan reads.
+// belongs to, and on to column 0 when that character is gone, as a line shift
+// inside left and right margins can leave it, copying the half of a wide
+// character inside them. So before each SetCell vt makes in Write or Resize,
+// Screen.chargeScan charges a placeholder target its column plus one, the
+// most that scan reads. A print's SetCell is the exception: Screen.printCell
+// first blanks a wide character the print writes over part of, so it never
+// scans.
 //
-//	(*uv.Buffer).SetCell               Screen.setCells, Screen.deleteCellArea, Screen.fillArea: one cell in a metered span, and a placeholder's scan
+//	(*uv.Buffer).SetCell               Screen.setCells, Screen.fillArea: one cell in a metered span, and a placeholder's scan
 //	(*uv.Buffer).SetCell               Buffer.InsertLineRect, Buffer.DeleteLineRect, Buffer.InsertCellRect, Buffer.DeleteCellRect: outside the meter, in vt's Buffer, which no emulator uses
-//	(*uv.RenderBuffer).SetCell         Screen.SetCell: one cell, which a print or the carried cluster's undo charges with its width, and a placeholder's scan
+//	(*uv.RenderBuffer).SetCell         Screen.SetCell: one cell, which a print (Screen.printCell) or the carried cluster's undo charges with its width, and the undo a placeholder's scan
 //	(*uv.RenderBuffer).TouchLine       anywhere: a constant, once per row a charged operation touches
 //	(*uv.Buffer).Bounds                anywhere: a constant
 //	(*uv.Buffer).CellAt                anywhere: a constant
@@ -62,19 +66,18 @@ package vt
 // in one call: vt does their work itself, with the same result, a span at a
 // time. Screen.clearCells clears as Buffer.Clear does; Screen.fillArea fills
 // and clears as Buffer.FillArea and ClearArea do, its own SetCell calls
-// charged one by one; Screen.insertCellArea and Screen.deleteCellArea
-// shift a row as RenderBuffer.InsertCellArea and DeleteCellArea do (a shift
-// split by columns through them would come out different, since their
-// SetCell mends a wide character across the split); Screen.shiftRowsDown and
-// Screen.shiftRowsUp shift a narrower region's rows as
-// RenderBuffer.InsertLineArea and DeleteLineArea do; Screen.reallocate
-// builds its rows instead of uv.NewLine, and does the work of Buffer.Resize.
+// charged one by one; Screen.insertCells and Screen.deleteCells shift a row,
+// as xterm does where RenderBuffer.InsertCellArea and DeleteCellArea don't
+// (shift.go); Screen.shiftRowsDown and Screen.shiftRowsUp shift a narrower
+// region's rows as RenderBuffer.InsertLineArea and DeleteLineArea do;
+// Screen.reallocate builds its rows instead of uv.NewLine, and does the work
+// of Buffer.Resize.
 //
 //	(*uv.Buffer).Clear                 none: Screen.clearCells
 //	(*uv.Buffer).FillArea              none: Screen.fillArea
 //	(*uv.Buffer).ClearArea             none: Screen.fillArea
-//	(*uv.RenderBuffer).InsertCellArea  none: Screen.insertCellArea
-//	(*uv.RenderBuffer).DeleteCellArea  none: Screen.deleteCellArea
+//	(*uv.RenderBuffer).InsertCellArea  none: Screen.insertCells
+//	(*uv.RenderBuffer).DeleteCellArea  none: Screen.deleteCells
 //	(*uv.RenderBuffer).InsertLineArea  none: Screen.shiftRowsDown
 //	(*uv.RenderBuffer).DeleteLineArea  none: Screen.shiftRowsUp
 //	(*uv.Buffer).Resize                none: Screen.reallocate
