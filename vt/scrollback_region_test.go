@@ -25,14 +25,15 @@ func runRegionTest(seq string) (scrollback, scrolledOff, rows []string) {
 	for _, l := range e.Scrollback().Lines() {
 		scrollback = append(scrollback, l.String())
 	}
-	return scrollback, scrolledOff, screenRows(e, 10)
+	return scrollback, scrolledOff, screenRows(e, e.Width())
 }
 
 // A row scrolled out of a region whose top margin is below the first row is
 // discarded, as in xterm: xtermScroll (util.c) saves the lines only when
 // screen->top_marg == 0, as does DeleteLine (util.c) for DL with the cursor
-// in row 0, and scrollInMargins saves none. A progress bar kept in such a
-// region would otherwise fill the history with lines a terminal never saved.
+// in row 0, and scrollInMargins saves none. A program that keeps a status
+// line above its scrolling region, as a chat client or a mail reader does,
+// would otherwise fill the history with lines a terminal never saved.
 func TestARegionNotAtTheTopFeedsNoHistory(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -108,6 +109,25 @@ func TestARegionAtTheTopFeedsHistory(t *testing.T) {
 				t.Errorf("screen rows: got = %q, want = %q", rows, wantRows)
 			}
 		})
+	}
+}
+
+// DL saves the lines it deletes only from the first row: xterm's DeleteLine
+// (util.c:1743) saves them when scroll_all_lines, which needs cur_row == 0.
+// From the second row of a region that starts at the first, the deleted row
+// is discarded.
+func TestDLBelowTheFirstRowFeedsNoHistory(t *testing.T) {
+	scrollback, scrolledOff, rows := runRegionTest("\x1b[1;5r\x1b[2;1H\x1b[M")
+
+	want := []string{"r1", "r3", "r4", "r5", "", "r6"}
+	if !slices.Equal(rows, want) {
+		t.Errorf("screen rows: got = %q, want = %q", rows, want)
+	}
+	if len(scrollback) != 0 {
+		t.Errorf("scrollback: got = %q, want none", scrollback)
+	}
+	if len(scrolledOff) != 0 {
+		t.Errorf("scroll-off function: got = %q, want none", scrolledOff)
 	}
 }
 

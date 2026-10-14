@@ -26,7 +26,9 @@ func (e *Emulator) linefeed() {
 func (e *Emulator) index() {
 	x, y := e.scr.CursorPosition()
 	scroll := e.scr.ScrollRegion()
-	// XXX: Handle scrollback whenever we add it.
+	// At the bottom margin, the scroll sends the top line to history when
+	// the region starts at the first row and spans every column (see
+	// [Screen.ScrollUp]).
 	if y == scroll.Max.Y-1 && x >= scroll.Min.X && x < scroll.Max.X {
 		e.scr.ScrollUp(1)
 	} else if y < scroll.Max.Y-1 || !uv.Pos(x, y).In(scroll) {

@@ -635,8 +635,10 @@ func (s *Screen) scanCost(x, y int) int {
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
-// scrolled past the top margin are lost. This is equivalent to [ansi.SU] which
-// moves the cursor to the top margin and performs a [ansi.DL] operation.
+// scrolled past the top margin go to history when the region starts at the
+// first row and spans every column, as DeleteLine saves them, and are lost
+// otherwise. This is equivalent to [ansi.SU] which moves the cursor to the
+// top margin and performs a [ansi.DL] operation.
 func (s *Screen) ScrollUp(n int) {
 	x, y := s.CursorPosition()
 	s.setCursor(s.cur.X, 0, true)
@@ -690,8 +692,8 @@ func (s *Screen) InsertLine(n int) bool {
 // Only operates if cursor is within scroll region. Lines below cursor Y
 // are moved up, with blank lines inserted at the bottom of scroll region.
 // If scrollback is enabled and cursor is at top of a scroll region that starts
-// at the first row, lines are saved to the scrollback buffer before deletion.
-// It returns true if the operation was successful.
+// at the first row and spans every column, lines are saved to the scrollback
+// buffer before deletion. It returns true if the operation was successful.
 func (s *Screen) DeleteLine(n int) bool {
 	if n <= 0 {
 		return false
