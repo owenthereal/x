@@ -93,10 +93,11 @@ func (e *Emulator) HandoffPrefix(b []byte) int {
 	return e.parser.HandoffPrefix(b)
 }
 
-// Carrying reports whether the emulator holds a printed cluster that the next
-// Write could still extend: the last Write ended in printing, and nothing but
+// Carrying reports whether the emulator holds a cluster that the next Write
+// could still extend: the last Write ended in printing, and nothing but
 // printing has happened since. A mark at the start of the next Write then
-// joins that cluster, as it would have arriving in the same Write.
+// joins that cluster, as it would have arriving in the same Write. A cluster
+// dropped for having no base counts: what joins it is dropped with it.
 func (e *Emulator) Carrying() bool {
 	// Between Writes the cursor and the screen are where the cluster left
 	// them, so of resumeCluster's conditions only the bound on its length

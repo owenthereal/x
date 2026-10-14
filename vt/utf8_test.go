@@ -226,6 +226,38 @@ func TestNoStaleClusterIsCarried(t *testing.T) {
 	})
 }
 
+// A cluster with no base is dropped, but the next Write can still extend it,
+// as the same bytes in one Write would: what joins it is dropped with it, or,
+// where the joined cluster has a width (a mark and VS16), printed with it.
+// Joining nothing, the next Write prints as it would anyway.
+func TestABaseLessClusterIsCarried(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+		want   wideState
+	}{
+		{"a ZWJ, then a spacing mark", []string{"\u200d", "\u093f"}, wideState{[]string{""}, uv.Pos(0, 0), false}},
+		{"a mark, then a spacing mark", []string{"\u0301", "\u093f"}, wideState{[]string{""}, uv.Pos(0, 0), false}},
+		{"a mark after text, then a spacing mark", []string{"a\x1b[m\u0301", "\u093f"}, wideState{[]string{"a"}, uv.Pos(1, 0), false}},
+		{"a ZWJ, then an ignored CSI and a spacing mark", []string{"\u200d", "\x1b[$1\u093f"}, wideState{[]string{""}, uv.Pos(0, 0), false}},
+		{"a mark, then VS16", []string{"\u0301", "\ufe0f"}, wideState{[]string{"\u0301\ufe0f"}, uv.Pos(2, 0), false}},
+		{"a mark, then VS16 and text", []string{"\u0301", "\ufe0fx"}, wideState{[]string{"\u0301\ufe0fx"}, uv.Pos(3, 0), false}},
+		{"a mark, then VS16 and a spacing mark", []string{"\u0301", "\ufe0f\u093f"}, wideState{[]string{"\u0301\ufe0f\u093f"}, uv.Pos(2, 0), false}},
+		// A zero-width space ends its cluster, so nothing joins it.
+		{"a zero-width space, then a spacing mark", []string{"\u200b", "\u093f"}, wideState{[]string{"\u093f"}, uv.Pos(1, 0), false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, whole := writeWide(8, 1, strings.Join(tc.chunks, ""))
+			whole.check(t, tc.want)
+			_, split := writeWide(8, 1, tc.chunks...)
+			split.check(t, tc.want)
+			if e, _ := writeWide(8, 1, tc.chunks[0]); !e.Carrying() {
+				t.Errorf("Carrying after %q: got = false, want = true", tc.chunks[0])
+			}
+		})
+	}
+}
+
 // A character a charset maps is a cluster of its own, whether a mark after it
 // comes in the same Write or the next: the charset draws the byte as another
 // character, and a cluster of more than one byte isn't mapped, so joined to
