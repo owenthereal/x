@@ -244,35 +244,26 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 	return e.scr.cur.Style, !e.scr.cur.Steady
 }
 
-// Resize resizes the terminal.
+// Resize resizes the terminal, following xterm's ScreenResize. Each screen
+// keeps its cursor's row (see [Screen.Resize]); the rows the alternate screen
+// loses at the top are discarded, not moved into history. The cursors are
+// only kept on the screen, a wrap pending on either screen stays pending, and
+// the margins and origin mode are reset.
 func (e *Emulator) Resize(width int, height int) {
 	e.carry.valid = false
-	x, y := e.scr.CursorPosition()
-	if e.atPhantom {
-		if x < width-1 {
-			e.atPhantom = false
-			x++
-		}
-	}
-
-	if y < 0 {
-		y = 0
-	}
-	if y >= height {
-		y = height - 1
-	}
-	if x < 0 {
-		x = 0
-	}
-	if x >= width {
-		x = width - 1
-	}
-
 	e.scrs[0].Resize(width, height)
-	e.scrs[1].Resize(width, height)
+	// The alternate screen has no history.
+	e.scrs[1].resize(width, height, false)
 	e.tabstops = uv.DefaultTabStops(width)
 
-	e.setCursor(x, y)
+	// xterm clears origin mode with the margins, and leaves the cursor where
+	// it is, which setMode's homing would not.
+	if e.isModeSet(ansi.ModeOrigin) {
+		e.modes[ansi.ModeOrigin] = ansi.ModeReset
+		if e.cb.DisableMode != nil {
+			e.cb.DisableMode(ansi.ModeOrigin)
+		}
+	}
 
 	if e.isModeSet(ansi.ModeInBandResize) {
 		e.reply(ansi.InBandResize(e.Height(), e.Width(), 0, 0))
