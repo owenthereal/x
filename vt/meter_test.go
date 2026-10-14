@@ -27,6 +27,21 @@ func lowerMeterInterval(t testing.TB, n int) {
 	t.Cleanup(func() { meterInterval = old })
 }
 
+// charges returns the cell operations e is charged while do runs, and how
+// many times it calls the stop function, which charges sets to one that never
+// stops. Each call reports the charges since the one before; the charges
+// since the last call make up the rest.
+func charges(e *Emulator, do func()) (charged, calls int) {
+	charged = -e.meter.work
+	e.SetStopFunc(func() bool {
+		charged += e.meter.last
+		calls++
+		return false
+	})
+	do()
+	return charged + e.meter.work, calls
+}
+
 // writePattern writes a letter to every cell of e's screen, 'a'+(x+y)%26 at
 // column x of row y, so that a cell blanked or moved by a row or a column
 // differs from what it held.
@@ -445,9 +460,16 @@ func TestStopFuncCountsTheRowsAScrollMoves(t *testing.T) {
 // width, as a DCH at column 0 of a row of wide characters was while it moved
 // cells through SetCell, leaving an orphan at every other column, and as
 // prints and an ICH over orphans were. Each SetCell vt still makes is charged
-// its scan, and the shifts and the print no longer scan: the stop function
-// still comes throughout, with no more than the interval and a row's width
-// charged, and no more than 50 ms passed, between two calls.
+// its scan, and the shifts and the print no longer scan, so the stop function
+// still comes throughout.
+//
+// The count shows it, where a clock would depend on the machine's load: what
+// the operation is charged is at least the cells those scans read, and at
+// most a few rows' width more. Charged work reaches the stop function at
+// least once an interval, so it comes at least once per interval of scanning.
+// A scan left uncharged makes the charge fall short of the scans; work that
+// grows with the scans charged where nothing scans, such as a shift moving
+// cells through SetCell again, takes it past the rows' width.
 func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
 	const w = 32768
 	wide := strings.Repeat("日", w/2)
@@ -458,40 +480,47 @@ func TestStopFuncComesThroughAPlaceholderScan(t *testing.T) {
 			e.SetCell(x, 0, &uv.Cell{})
 		}
 	}
+	// Writing over each orphan, from the left, SetCell reads every cell
+	// before it, all of them blank by then.
+	orphanScans := 0
+	for x := 1; x < w; x += 2 {
+		orphanScans += x
+	}
 	for _, tc := range []struct {
 		name string
 		prep func(*Emulator)
 		op   string
+		// The cells ultraviolet's SetCell reads in its scans from
+		// placeholders.
+		scans int
 	}{
-		{"DCH at column 0 of a row of wide characters", func(e *Emulator) { e.WriteString(wide) }, "\x1b[1;1H\x1b[P"},
-		{"EL over orphaned placeholders", orphans, "\x1b[1;1H\x1b[2K"},
-		// A count of the whole row moves nothing and blanks every cell.
-		{"ICH over orphaned placeholders", orphans, "\x1b[1;1H\x1b[32768@"},
-		{"prints over orphaned placeholders", orphans, "\x1b[1;1Hx\x1b[32766b"},
+		// The shift moves the cells as they are, so nothing scans.
+		{"DCH at column 0 of a row of wide characters", func(e *Emulator) { e.WriteString(wide) }, "\x1b[1;1H\x1b[P", 0},
+		{"EL over orphaned placeholders", orphans, "\x1b[1;1H\x1b[2K", orphanScans},
+		// A count of the whole row moves nothing and blanks every cell, as
+		// they are.
+		{"ICH over orphaned placeholders", orphans, "\x1b[1;1H\x1b[32768@", 0},
+		// Each print blanks the orphan it lands on before SetCell writes
+		// there.
+		{"prints over orphaned placeholders", orphans, "\x1b[1;1Hx\x1b[32766b", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(w, 1)
 			tc.prep(e)
-			var longest time.Duration
-			calls := 0
-			last := time.Now()
-			e.SetStopFunc(func() bool {
-				now := time.Now()
-				longest = max(longest, now.Sub(last))
-				last = now
-				calls++
-				if e.meter.last > meterInterval+w {
-					t.Errorf("%d cell operations charged between two calls, more than the interval of %d and a row of %d", e.meter.last, meterInterval, w)
+			charged, calls := charges(e, func() {
+				if _, err := e.WriteString(tc.op); err != nil {
+					t.Fatalf("Write: got error %v", err)
 				}
-				return false
 			})
-			if _, err := e.WriteString(tc.op); err != nil {
-				t.Fatalf("Write: got error %v", err)
+			t.Logf("%d cell operations charged, %d calls to the stop function", charged, calls)
+			if charged < tc.scans {
+				t.Errorf("%d cell operations charged, fewer than the %d cells SetCell's scans read: the scans went uncharged", charged, tc.scans)
 			}
-			longest = max(longest, time.Since(last))
-			t.Logf("%d calls to the stop function, at most %v apart", calls, longest)
-			if longest > 50*time.Millisecond {
-				t.Errorf("%v between two calls to the stop function: the scans went uncharged", longest)
+			if most := tc.scans + 4*w; charged > most {
+				t.Errorf("%d cell operations charged, more than the %d cells SetCell's scans read and four rows of %d", charged, tc.scans, w)
+			}
+			if least := tc.scans / meterInterval; calls < least {
+				t.Errorf("stop function calls: got = %d, want at least %d, one per interval of the scans", calls, least)
 			}
 		})
 	}
