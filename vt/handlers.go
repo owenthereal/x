@@ -356,7 +356,7 @@ func (e *Emulator) registerDefaultEscHandlers() {
 
 	e.RegisterEscHandler('7', func() bool {
 		// Save Cursor [ansi.DECSC]
-		e.scr.SaveCursor()
+		e.saveCursor()
 		return true
 	})
 
@@ -414,6 +414,18 @@ func (e *Emulator) registerDefaultEscHandlers() {
 	e.RegisterEscHandler('M', func() bool {
 		// Reverse Index [ansi.RI]
 		e.reverseIndex()
+		return true
+	})
+
+	e.RegisterEscHandler('N', func() bool {
+		// Single Shift 2 [ansi.SS2], as the C1 control does.
+		e.gsingle = 2
+		return true
+	})
+
+	e.RegisterEscHandler('O', func() bool {
+		// Single Shift 3 [ansi.SS3], as the C1 control does.
+		e.gsingle = 3
 		return true
 	})
 
@@ -926,8 +938,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 			// depending on [ansi.DECOM].
 			e.setCursorPosition(0, 0)
 		} else {
-			// Save Current Cursor Position [ansi.SCOSC]
-			e.scr.SaveCursor()
+			// Save Current Cursor Position [ansi.SCOSC], which saves what
+			// DECSC does, as in xterm.
+			e.saveCursor()
 		}
 
 		return true
