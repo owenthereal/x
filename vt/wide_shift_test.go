@@ -323,7 +323,8 @@ func wellFormed(row uv.Line) int {
 // insertCells and deleteCells do what shiftModel does, whatever spans the
 // meter cuts them into, on rows of narrow and wide characters, with margins
 // and without, with a pen's background and without, and change no other row.
-// They leave every row whole.
+// They leave every row whole, and mark touched every cell they change, as the
+// cell-copy shifts before them did, and no other row.
 func TestRowShiftsMatchTheirModel(t *testing.T) {
 	lowerMeterInterval(t, 3)
 	const w, h = 12, 3
@@ -358,6 +359,7 @@ func TestRowShiftsMatchTheirModel(t *testing.T) {
 		for r := range h {
 			before[r] = slices.Clone(s.buf.Line(r))
 		}
+		s.buf.Touched = make([]*uv.LineData, h)
 		op := fmt.Sprintf("deleteCells(%d, %d, %d) in columns [%d, %d)", x, y, n, left, right)
 		if insert {
 			op = "insert" + op[len("delete"):]
@@ -376,6 +378,24 @@ func TestRowShiftsMatchTheirModel(t *testing.T) {
 			}
 			if at := wellFormed(got); at >= 0 {
 				t.Fatalf("%s, row %d: broken wide character at column %d: %q", op, r, at, got)
+			}
+			// A renderer repaints only the rows marked touched: every cell
+			// the shift changed is inside its row's mark, and the rows it
+			// didn't shift have none.
+			var touched *uv.LineData
+			if r < len(s.buf.Touched) {
+				touched = s.buf.Touched[r]
+			}
+			if r != y {
+				if touched != nil {
+					t.Fatalf("%s: row %d, which the shift doesn't change, is touched %d-%d", op, r, touched.FirstCell, touched.LastCell)
+				}
+				continue
+			}
+			for c := range got {
+				if got[c] != before[r][c] && (touched == nil || c < touched.FirstCell || c >= touched.LastCell) {
+					t.Fatalf("%s: row %d's column %d changed, outside its touched mark %v", op, r, c, touchedText(s.buf.Touched))
+				}
 			}
 		}
 	}
