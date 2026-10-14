@@ -284,8 +284,9 @@ func (e *Emulator) Resize(width int, height int) {
 	if e.meter.spent() {
 		return
 	}
-	// A resize ends the cluster the last Write printed: a mark in the next
-	// Write doesn't join it, and nothing that Write drops can carry it.
+	// A resize ends the cluster the last Write printed, so a mark in the
+	// next Write doesn't join it. Clearing lastCluster too is defensive: the
+	// next Write carries only a cluster its own flush sets.
 	e.carry.valid, e.lastCluster.valid = false, false
 	// xterm reallocates the hidden buffer around cur_row as well (Reallocate's
 	// move_up), and saves lines only from the buffer showing

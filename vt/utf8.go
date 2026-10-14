@@ -83,8 +83,10 @@ func (e *Emulator) flushGrapheme() {
 	// Anything but printing between two Writes ends the cluster the first
 	// one finished with, and every sequence handler comes through here.
 	e.carry.valid = false
-	// What an earlier flush printed is not what this one ends with, so the
-	// Write that ends here must not carry it, across whatever came between.
+	// What an earlier flush printed is not what this one ends with. This is
+	// defensive: a Write carries lastCluster only after a flush that has
+	// just set it, unless the meter stopped that flush, which spends the
+	// emulator.
 	e.lastCluster.valid = false
 	if len(e.grapheme) == 0 {
 		return
