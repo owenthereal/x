@@ -182,6 +182,32 @@ func TestCarriageReturnUnderOriginModeKeepsTheRow(t *testing.T) {
 	}
 }
 
+// Without ORIGIN, cursor.c's CarriageReturn goes to the left margin from
+// any column on or right of it (cur_col >= left), and to column 0 only from
+// left of it: right of the right margin, or on a row outside the top and
+// bottom margins, the cursor still goes to the left margin. With DECSLRM 3;8
+// that is column 2.
+func TestCarriageReturnGoesToTheLeftMarginFromRightOfIt(t *testing.T) {
+	const margins = "\x1b[5;20r\x1b[?69h\x1b[3;8s"
+	for _, tc := range []struct {
+		name, at string
+		want     uv.Position
+	}{
+		{"inside the margins", "\x1b[7;5H", uv.Pos(2, 6)},
+		{"right of the right margin", "\x1b[7;10H", uv.Pos(2, 6)},
+		{"above the top margin", "\x1b[1;5H", uv.Pos(2, 0)},
+		{"left of the left margin", "\x1b[7;2H", uv.Pos(0, 6)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 24)
+			_, _ = e.WriteString(margins + tc.at + "\r")
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // Under ORIGIN, charproc.c's CASE_HPA, CASE_HPR, CASE_VPA and CASE_VPR move
 // from cursor.c's CursorRow and CursorCol, the cursor's place relative to the
 // top and left margins (:552-573), and CursorSet adds the margins back once.
