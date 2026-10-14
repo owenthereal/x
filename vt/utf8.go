@@ -48,9 +48,33 @@ func (e *Emulator) handlePrint(r rune) {
 			return
 		}
 		e.flushGrapheme()
+	} else if len(e.grapheme) == 1 {
+		// A character the charset maps is drawn as another, which no
+		// later rune can join: a cluster of more than one byte isn't
+		// mapped, so joining it would undo the mapping. Print it alone,
+		// as it is when a Write ends right after it.
+		if _, ok := e.mapCharset(e.grapheme[0], e.gsingle); ok {
+			e.flushGrapheme()
+		}
 	}
 
 	e.grapheme = utf8.AppendRune(e.grapheme, r)
+}
+
+// mapCharset returns what the character sets draw the one-byte character c
+// as, with the single shift single pending, and whether they map it at all.
+func (e *Emulator) mapCharset(c byte, single int) (string, bool) {
+	var charset CharSet
+	switch {
+	case single > 1 && single < 4:
+		charset = e.charsets[single]
+	case c < 128:
+		charset = e.charsets[e.gl]
+	default:
+		charset = e.charsets[e.gr]
+	}
+	r, ok := charset[c]
+	return r, ok
 }
 
 // flushGrapheme flushes the current grapheme buffer, if any, and handles the
@@ -201,22 +225,10 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	e.gsingle = 0
 
 	// Handle character set mappings
-	if len(content) == 1 { //nolint:nestif
-		var charset CharSet
-		c := content[0]
-		if single > 1 && single < 4 {
-			charset = e.charsets[single]
-		} else if c < 128 {
-			charset = e.charsets[e.gl]
-		} else {
-			charset = e.charsets[e.gr]
-		}
-
-		if charset != nil {
-			if r, ok := charset[c]; ok {
-				cell.Content = r
-				cell.Width = 1
-			}
+	if len(content) == 1 {
+		if r, ok := e.mapCharset(content[0], single); ok {
+			cell.Content = r
+			cell.Width = 1
 		}
 	}
 

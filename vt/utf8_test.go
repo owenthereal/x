@@ -226,6 +226,33 @@ func TestNoStaleClusterIsCarried(t *testing.T) {
 	})
 }
 
+// A character a charset maps is a cluster of its own, whether a mark after it
+// comes in the same Write or the next: the charset draws the byte as another
+// character, and a cluster of more than one byte isn't mapped, so joined to
+// the mark it would lose the mapping. xterm draws the mapped character and
+// puts the mark on it; x/vt keeps the character and, as for any mark with
+// nothing to attach to, drops the mark.
+func TestACharsetMappedCharacterTakesNoMark(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+		want   wideState
+	}{
+		{"DEC special graphics", []string{"\x1b(0q", "\u0302"}, wideState{[]string{"─"}, uv.Pos(1, 0), false}},
+		// REP repeats the byte, which the charset maps again.
+		{"DEC special graphics, then REP", []string{"\x1b(0q", "\u0302\x1b[b"}, wideState{[]string{"──"}, uv.Pos(2, 0), false}},
+		{"a single shift", []string{"\x1b*0\x8ea", "\u0301b"}, wideState{[]string{"▒b"}, uv.Pos(2, 0), false}},
+		{"a byte the charset doesn't map", []string{"\x1b(0A", "\u0301"}, wideState{[]string{"A\u0301"}, uv.Pos(1, 0), false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, whole := writeWide(6, 1, strings.Join(tc.chunks, ""))
+			whole.check(t, tc.want)
+			_, split := writeWide(6, 1, tc.chunks...)
+			split.check(t, tc.want)
+		})
+	}
+}
+
 func TestPrintingASCIIDoesNotAllocate(t *testing.T) {
 	term := newTestTerminal(t, 80, 24)
 	line := []byte(strings.Repeat("abcdefgh", 10)[:79] + "\r")
