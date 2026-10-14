@@ -96,6 +96,20 @@ func (e *Emulator) setCursorPosition(x, y int) {
 	e.atPhantom = false
 }
 
+// cursorAddress returns the cursor's position as setCursorPosition reads
+// one: relative to the top and left margins under [ansi.DECOM], as xterm's
+// CursorRow and CursorCol report it, and the screen's otherwise. HPA, HPR,
+// VPA and VPR keep one coordinate, or move from it, so they read it here
+// rather than add the margins twice.
+func (e *Emulator) cursorAddress() (x, y int) {
+	x, y = e.scr.CursorPosition()
+	if e.isModeSet(ansi.DECOM) {
+		region := e.scr.ScrollRegion()
+		x, y = x-region.Min.X, y-region.Min.Y
+	}
+	return x, y
+}
+
 // carriageReturn moves the cursor to the leftmost column. If [ansi.DECOM] is
 // set, the cursor is set to the left margin. If not, and the cursor is on or
 // to the right of the left margin, the cursor is set to the left margin.

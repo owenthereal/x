@@ -528,8 +528,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		return true
 	})
 
-	e.RegisterCsiHandler('H', func(params ansi.Params) bool {
-		// Cursor Position [ansi.CUP]
+	// Cursor Position [ansi.CUP], and Horizontal and Vertical Position
+	// [ansi.HVP], which xterm's CSI table makes CUP.
+	cup := func(params ansi.Params) bool {
 		width, height := e.Width(), e.Height()
 		row, _, _ := params.Param(0, 1)
 		col, _, _ := params.Param(1, 1)
@@ -543,7 +544,8 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		x := min(width-1, col-1)
 		e.setCursorPosition(x, y)
 		return true
-	})
+	}
+	e.RegisterCsiHandler('H', cup)
 
 	e.RegisterCsiHandler('I', func(params ansi.Params) bool {
 		// Cursor Horizontal Tabulation [ansi.CHT]
@@ -687,7 +689,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Horizontal Position Absolute [ansi.HPA]
 		n, _, _ := params.Param(0, 1)
 		width := e.Width()
-		_, y := e.scr.CursorPosition()
+		_, y := e.cursorAddress()
 		e.setCursorPosition(min(width-1, n-1), y)
 		return true
 	})
@@ -696,7 +698,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Horizontal Position Relative [ansi.HPR]
 		n, _, _ := params.Param(0, 1)
 		width := e.Width()
-		x, y := e.scr.CursorPosition()
+		x, y := e.cursorAddress()
 		e.setCursorPosition(min(width-1, x+n), y)
 		return true
 	})
@@ -745,7 +747,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Vertical Position Absolute [ansi.VPA]
 		n, _, _ := params.Param(0, 1)
 		height := e.Height()
-		x, _ := e.scr.CursorPosition()
+		x, _ := e.cursorAddress()
 		e.setCursorPosition(x, min(height-1, n-1))
 		return true
 	})
@@ -754,21 +756,12 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Vertical Position Relative [ansi.VPR]
 		n, _, _ := params.Param(0, 1)
 		height := e.Height()
-		x, y := e.scr.CursorPosition()
+		x, y := e.cursorAddress()
 		e.setCursorPosition(x, min(height-1, y+n))
 		return true
 	})
 
-	e.RegisterCsiHandler('f', func(params ansi.Params) bool {
-		// Horizontal and Vertical Position [ansi.HVP]
-		width, height := e.Width(), e.Height()
-		row, _, _ := params.Param(0, 1)
-		col, _, _ := params.Param(1, 1)
-		y := min(height-1, row-1)
-		x := min(width-1, col-1)
-		e.setCursor(x, y)
-		return true
-	})
+	e.RegisterCsiHandler('f', cup)
 
 	e.RegisterCsiHandler('g', func(params ansi.Params) bool {
 		// Tab Clear [ansi.TBC]

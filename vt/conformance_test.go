@@ -182,6 +182,43 @@ func TestCarriageReturnUnderOriginModeKeepsTheRow(t *testing.T) {
 	}
 }
 
+// Under ORIGIN, charproc.c's CASE_HPA, CASE_HPR, CASE_VPA and CASE_VPR move
+// from cursor.c's CursorRow and CursorCol, the cursor's place relative to the
+// top and left margins (:552-573), and CursorSet adds the margins back once.
+// HVP is CASE_CUP in xterm's CSI table, so it honours origin mode too. The
+// region is rows 4 to 19, so CUP 3;4 under origin mode puts the cursor at
+// column 3 of row 6; with DECSLRM 3;8 too, at column 5.
+func TestPositionsUnderOriginModeAreInsideTheMargins(t *testing.T) {
+	const rows = "\x1b[5;20r\x1b[?6h\x1b[3;4H"
+	const both = "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[3;4H"
+	for _, tc := range []struct {
+		name, prep, seq string
+		want            uv.Position
+	}{
+		{"HPA", rows, "\x1b[5`", uv.Pos(4, 6)},
+		{"HPR", rows, "\x1b[2a", uv.Pos(5, 6)},
+		{"VPA", rows, "\x1b[2d", uv.Pos(3, 5)},
+		{"VPR", rows, "\x1b[1e", uv.Pos(3, 7)},
+		{"HVP", rows, "\x1b[2;3f", uv.Pos(2, 5)},
+		{"HPA inside left and right margins", both, "\x1b[2`", uv.Pos(3, 6)},
+		{"HPR inside left and right margins", both, "\x1b[1a", uv.Pos(6, 6)},
+		{"VPA inside left and right margins", both, "\x1b[2d", uv.Pos(5, 5)},
+		{"VPR inside left and right margins", both, "\x1b[1e", uv.Pos(5, 7)},
+		{"HVP inside left and right margins", both, "\x1b[1;1f", uv.Pos(2, 4)},
+		// CursorSet stops at the bottom and right margins.
+		{"HPA past the right margin", both, "\x1b[99`", uv.Pos(7, 6)},
+		{"VPR past the bottom margin", both, "\x1b[99e", uv.Pos(5, 19)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 24)
+			_, _ = e.WriteString(tc.prep + tc.seq)
+			if got := e.CursorPosition(); got != tc.want {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // charproc.c's dotext sets need_wrap when the text fills the rest of the line
 // (:7157-7158), whatever its width, and keeps it in do_wrap (:7173) whatever
 // WRAPAROUND is. The next print takes the flag (:7065-7066) and wraps only if
