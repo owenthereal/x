@@ -7,11 +7,15 @@ package vt
 // byte parsed. It charges a piece of work before doing it, and the stop
 // function is called before a piece that would take the count since the last
 // call past meterInterval. Pieces are cut to at most meterInterval, so that
-// is the most work done between two calls, except for the pieces handed over
-// whole (a line to history, a row of tab stops, a SetCell's scan from a
+// is the most work charged between two calls, except for the pieces handed
+// over whole (a line to history, a row of tab stops, a SetCell's scan from a
 // placeholder, the scan for a wide character a shift or a print cuts), which
 // are larger only on a screen more than MeterInterval columns wide, or with a
-// scrollback longer than that.
+// scrollback longer than that. The work done between two calls can be more:
+// a fill or a run of SetCells charges a span before writing it, and each
+// placeholder's scan inside it as it comes, so a scan that brings a call
+// leaves the rest of a span already charged to be written after it. Around
+// placeholders that is up to about twice the interval.
 //
 // A check around a call into ultraviolet bounds nothing inside the call, so
 // each call vt makes is bounded here: by the cells it is given, which the

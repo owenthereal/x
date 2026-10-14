@@ -135,8 +135,8 @@ func TestStopFuncStopsInsideAnErase(t *testing.T) {
 
 // With meterInterval lowered to 1,024 (each of these is smaller than the
 // default interval, so the API alone doesn't require a stop inside it): the
-// same arming, for EL across a 4,096-column row, ECH 1,000,000,000 (a full
-// row after P3's clamp), DECALN on 64x64, and DL in a region one column
+// same arming, for EL across a 4,096-column row, ECH 1,000,000,000 (clamped
+// to a full row), DECALN on 64x64, and DL in a region one column
 // narrower than a 64x64 screen: each stops with its operation part done, and
 // the delegated spans are at most 1,024 cells.
 //
