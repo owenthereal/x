@@ -179,7 +179,10 @@ func (e *Emulator) undoCluster(c clusterMark) bool {
 		// Put back what the cluster wrote over at the last column. An
 		// insert there only sets the cell, so this undoes one too. If the
 		// cell no longer holds the cluster, what it wrote over has gone
-		// with it, and the cell is blanked as anywhere else.
+		// with it, and the cell is blanked as anywhere else. Nothing
+		// written can change the cell before the mark that resumes the
+		// cluster, as anything else ends the carry; the host's SetCell
+		// between the two Writes can, which is what this guards.
 		if !e.meter.spend(len(c.under)) {
 			return false
 		}
