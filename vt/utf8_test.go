@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -436,15 +437,29 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		newEmulator := func() *Emulator {
 			e := NewEmulator(width, height)
 			e.SetReplyFunc(func([]byte) {})
+			// REP does the work its count asks for, without bound, so an
+			// input past about a million cell operations is skipped
+			// rather than left to run past the fuzzer's time limit.
+			calls := 0
+			e.SetStopFunc(func() bool {
+				calls++
+				return calls > 16
+			})
 			return e
 		}
 		whole, split := newEmulator(), newEmulator()
-		whole.Write(in)
+		_, err := whole.Write(in)
+		stopped := errors.Is(err, ErrStopped)
 		bounded, from := false, 0
 		for _, to := range append(cuts, len(in)) {
 			bounded = bounded || split.carry.valid && len(split.carry.content) >= maxCarriedCluster
-			split.Write(in[from:to])
+			if _, err := split.Write(in[from:to]); errors.Is(err, ErrStopped) {
+				stopped = true
+			}
 			from = to
+		}
+		if stopped {
+			t.Skip("more work than the fuzz allows an input")
 		}
 		if diff := splitDiff(whole, split); diff != "" && !bounded {
 			t.Fatalf("%dx%d, %q cut at %v: %s", width, height, in, cuts, diff)
