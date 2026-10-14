@@ -355,8 +355,10 @@ func (p *Parser) performAction(action parser.Action, state parser.State, b byte)
 				p.params[p.paramsLen] = 0
 			}
 
-			p.params[p.paramsLen] *= 10
-			p.params[p.paramsLen] += int(b - '0')
+			// A parameter stays at MaxParam once it gets there, as xterm's
+			// stays at MAX_I_PARAM, rather than overflowing the int and
+			// leaving whatever its low bits make.
+			p.params[p.paramsLen] = min(p.params[p.paramsLen]*10+int(b-'0'), parser.MaxParam)
 		}
 
 		if b == ':' {

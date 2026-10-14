@@ -132,6 +132,19 @@ func TestCsiSequence(t *testing.T) {
 			},
 		},
 		{
+			// A parameter past the largest stays at it, as xterm's
+			// CASE_ESC_DIGIT keeps it at MAX_I_PARAM, digit by digit, so a
+			// count too long for an int doesn't wrap around to a small one.
+			name:  "params_past_the_largest",
+			input: "\x1b[100000;4294967297;7777777777777777777777777770;65536m",
+			expected: []any{
+				csiSequence{
+					Params: Params{parser.MaxParam, parser.MaxParam, parser.MaxParam, parser.MaxParam},
+					Cmd:    'm',
+				},
+			},
+		},
+		{
 			name:  "reset",
 			input: "\x1b[3;1\x1b[?1049h",
 			expected: []any{
