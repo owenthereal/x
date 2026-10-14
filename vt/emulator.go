@@ -67,8 +67,14 @@ type Emulator struct {
 	// The current reported working directory. This is not validated.
 	cwd string
 
-	// tabstop is the list of tab stops.
+	// tabstops holds the tab stops of every column a screen has had since
+	// the last RIS, past the screen's right edge too: as in xterm, whose
+	// bitmap is wider than any screen, a resize changes none of them.
 	tabstops *uv.TabStops
+	// stopsCleared is set once TBC 3 or DECST8C has cleared the stops of
+	// the columns no screen has had yet, which a widening then adds with
+	// none. Otherwise they hold the default stop every 8 columns.
+	stopsCleared bool
 
 	// I/O pipes.
 	pr *io.PipeReader
@@ -291,7 +297,7 @@ func (e *Emulator) Resize(width int, height int) {
 	if !e.scrs[1].resize(width, height, y, false) || !e.meter.spend(max(width, 1)) {
 		return
 	}
-	e.tabstops = uv.DefaultTabStops(width)
+	e.widenTabStops(width)
 
 	// xterm clears origin mode with the margins, and leaves the cursor where
 	// it is, which setMode's homing would not.
@@ -547,11 +553,31 @@ func (e *Emulator) SetIndexedColor(i int, c color.Color) {
 	e.colors[i] = c
 }
 
-// resetTabStops resets the terminal tab stops to the default set, a piece of
-// work as wide as the screen.
+// resetTabStops resets the terminal tab stops to the default set, for the
+// screen and every column a widening adds, as xterm's TabReset does: a piece
+// of work as wide as the screen.
 func (e *Emulator) resetTabStops() {
 	if e.meter.spend(max(e.Width(), 1)) {
 		e.tabstops = uv.DefaultTabStops(e.Width())
+		e.stopsCleared = false
+	}
+}
+
+// widenTabStops adds the columns past every width the tab stops have held
+// when the screen grows past it, with the default stops or, once TBC 3 or
+// DECST8C has cleared them, none. The stops of the columns they held are
+// left as they are, on the screen or past its edge. Resize charges the
+// work, which is at most the new width.
+func (e *Emulator) widenTabStops(width int) {
+	from := e.tabstops.Width()
+	if width <= from {
+		return
+	}
+	e.tabstops.Resize(width)
+	if e.stopsCleared {
+		for x := from; x < width; x++ {
+			e.tabstops.Reset(x)
+		}
 	}
 }
 

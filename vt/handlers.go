@@ -666,6 +666,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Set Tab at Every 8 Columns [ansi.DECST8C]
 		if len(params) == 1 && params[0] == 5 {
 			e.resetTabStops()
+			// xterm's CASE_DECST8C clears every stop and sets them only as
+			// far as the screen goes, so a widening adds none.
+			e.stopsCleared = true
 			return true
 		}
 		return false
@@ -774,6 +777,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 			// Clearing every stop is a piece of work as wide as the screen.
 			if e.meter.spend(max(e.Width(), 1)) {
 				e.tabstops.Clear()
+				e.stopsCleared = true
 			}
 		default:
 			return false

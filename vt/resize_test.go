@@ -207,6 +207,58 @@ func TestAltScreenHeightShrinkKeepsTheCursorLine(t *testing.T) {
 	}
 }
 
+// xterm keeps its tab stops in a bitmap wider than any screen (Tabs,
+// ptyx.h:3626-3629), which only TabReset, at start-up and on RIS
+// (charproc.c:12722, :14449), sets back to a stop every 8 columns. A resize
+// leaves it: a stop keeps through a narrowing that hides it and the widening
+// that shows it again, and a column no screen has had yet holds the default
+// stop, unless TBC 3 (TabZonk) or DECST8C, which sets stops only as far as
+// the screen goes (CASE_DECST8C, charproc.c:5890-5900), cleared them all.
+// TabStops reports the stops on the screen.
+func TestAResizeKeepsTheTabStops(t *testing.T) {
+	// The stops HT reaches from column 0, to the last column.
+	tabs := func(e *Emulator) []int {
+		var got []int
+		e.WriteString("\x1b[1;1H")
+		for x := 0; x < e.Width()-1; x = e.CursorPosition().X {
+			e.WriteString("\t")
+			got = append(got, e.CursorPosition().X)
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		name   string
+		width  int
+		prep   string
+		resize [][2]int
+		want   []int
+		// What HT reaches from column 0.
+		reached []int
+	}{
+		{"custom stops through a narrowing", 40, "\x1b[3g\x1b[1;6H\x1bH\x1b[1;31H\x1bH", [][2]int{{20, 4}}, []int{5}, []int{5, 19}},
+		{"custom stops through a narrowing and a widening", 40, "\x1b[3g\x1b[1;6H\x1bH\x1b[1;31H\x1bH", [][2]int{{20, 4}, {40, 4}}, []int{5, 30}, []int{5, 30, 39}},
+		{"custom stops through a height change", 40, "\x1b[3g\x1b[1;5H\x1bH\x1b[1;9H\x1bH\x1b[1;13H\x1bH", [][2]int{{40, 3}}, []int{4, 8, 12}, []int{4, 8, 12, 39}},
+		{"the default stops through a widening", 20, "", [][2]int{{40, 4}}, []int{0, 8, 16, 24, 32}, []int{8, 16, 24, 32, 39}},
+		{"no stops through a widening, after TBC 3", 20, "\x1b[3g", [][2]int{{40, 4}}, nil, []int{39}},
+		{"no new stops through a widening, after DECST8C", 20, "\x1b[3g\x1b[?5W", [][2]int{{40, 4}}, []int{0, 8, 16}, []int{8, 16, 39}},
+		{"custom stops through a narrowing, then the default ones past them", 40, "\x1b[1;6H\x1bH", [][2]int{{20, 4}, {48, 4}}, []int{0, 5, 8, 16, 24, 32, 40}, []int{5, 8, 16, 24, 32, 40, 47}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEmulator(tc.width, 4)
+			e.WriteString(tc.prep)
+			for _, size := range tc.resize {
+				e.Resize(size[0], size[1])
+			}
+			if got := e.TabStops(); !slices.Equal(got, tc.want) {
+				t.Errorf("TabStops: got = %v, want = %v", got, tc.want)
+			}
+			if got := tabs(e); !slices.Equal(got, tc.reached) {
+				t.Errorf("columns HT reaches: got = %v, want = %v", got, tc.reached)
+			}
+		})
+	}
+}
+
 // A resize leaves the DECSC slot where it was, as xterm's ScreenResize
 // (screen.c:2217) does: it moves a saved cursor only for the main screen
 // while the alternate one shows, and only by the rows a growth pulls back

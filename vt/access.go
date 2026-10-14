@@ -138,14 +138,16 @@ func (e *Emulator) SingleShift() int {
 	return e.gsingle
 }
 
-// TabStops returns the columns that have a tab stop, ascending. The slice is
-// the caller's.
+// TabStops returns the columns of the screen that have a tab stop, ascending.
+// A narrowing keeps the stops past the new right edge, as xterm does, for a
+// widening to bring back, but they are not reported. The slice is the
+// caller's.
 func (e *Emulator) TabStops() []int {
 	// The scan is as wide as the screen, and not charged to the work meter:
 	// it runs outside Write and Resize, at the caller's pace, over a width
 	// only the caller sets.
 	var stops []int
-	for x := range e.tabstops.Width() {
+	for x := range e.Width() {
 		if e.tabstops.IsStop(x) {
 			stops = append(stops, x)
 		}

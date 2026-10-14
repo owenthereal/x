@@ -43,13 +43,14 @@ func TestTabStopsReportsTheStops(t *testing.T) {
 		t.Errorf("after TBC 3: got = %v, want none", got)
 	}
 
-	// A resize and RIS both go back to the default set, for the new width.
-	_, _ = e.WriteString("\x1b[1;6H\x1bH")
+	// A resize keeps the stops, reporting those on the screen, and RIS goes
+	// back to the default set, for the width then.
+	_, _ = e.WriteString("\x1b[1;6H\x1bH\x1b[1;31H\x1bH")
 	e.Resize(20, 24)
-	if got, want := e.TabStops(), []int{0, 8, 16}; !slices.Equal(got, want) {
+	if got, want := e.TabStops(), []int{5}; !slices.Equal(got, want) {
 		t.Errorf("after a resize to 20 columns: got = %v, want = %v", got, want)
 	}
-	_, _ = e.WriteString("\x1b[3g\x1bc")
+	_, _ = e.WriteString("\x1bc")
 	if got, want := e.TabStops(), []int{0, 8, 16}; !slices.Equal(got, want) {
 		t.Errorf("after RIS: got = %v, want = %v", got, want)
 	}

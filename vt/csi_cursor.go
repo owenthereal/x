@@ -19,11 +19,7 @@ func (e *Emulator) nextTab(n int) {
 		return
 	}
 	for range n {
-		ts := e.tabstops.Next(x)
-		if ts < x {
-			break
-		}
-		x = ts
+		x = e.nextTabStop(x)
 	}
 
 	if x >= scroll.Max.X {
@@ -33,6 +29,19 @@ func (e *Emulator) nextTab(n int) {
 	// NOTE: We use t.scr.setCursor here because we don't want to reset the
 	// phantom state.
 	e.scr.setCursor(x, y, false)
+}
+
+// nextTabStop returns the first tab stop right of column x on the screen, or
+// the last column if none is left. The stops past the screen's right edge,
+// which a narrowing keeps, are not on it, so the scan stops at the edge.
+func (e *Emulator) nextTabStop(x int) int {
+	for last := e.Width() - 1; x < last; {
+		x++
+		if e.tabstops.IsStop(x) {
+			break
+		}
+	}
+	return x
 }
 
 // prevTab moves the cursor to the previous tab stop n times. This respects the

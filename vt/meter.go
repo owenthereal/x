@@ -50,12 +50,13 @@ package vt
 //	(*uv.TabStops).Set                 anywhere: a constant
 //	(*uv.TabStops).Reset               anywhere: a constant
 //	uv.ReadStyle                       Emulator.handleSgr: the SGR's parameters, which the parser bounds
-//	(uv.TabStops).Next                 Emulator.nextTab: whole, charged with the columns right of the cursor
 //	(uv.TabStops).Prev                 Emulator.prevTab: whole, charged with the columns left of the cursor
+//	(uv.TabStops).IsStop               Emulator.nextTabStop: once per column, which nextTab charges with the columns right of the cursor
 //	(uv.TabStops).IsStop               Emulator.TabStops: once per column, outside Write and Resize
-//	(*uv.TabStops).Width               Emulator.TabStops: a constant
+//	(*uv.TabStops).Width               Emulator.widenTabStops: a constant
 //	(*uv.TabStops).Clear               Emulator.registerDefaultCsiHandlers: whole, charged with the width (TBC 3)
-//	uv.DefaultTabStops                 NewEmulator, Emulator.Resize, Emulator.resetTabStops: whole, charged with the width, outside Write in NewEmulator
+//	(*uv.TabStops).Resize              Emulator.widenTabStops: whole, at most the new width, which Emulator.Resize charges
+//	uv.DefaultTabStops                 NewEmulator, Emulator.resetTabStops: whole, charged with the width, outside Write in NewEmulator
 //	uv.NewRenderBuffer                 NewScreen, Screen.resize: outside the meter, for a screen built from nothing, which no emulator's is once made
 //	(*uv.Buffer).Render                Emulator.Render: outside Write and Resize
 //	(*uv.Buffer).String                Emulator.String: outside Write and Resize
