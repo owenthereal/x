@@ -602,6 +602,33 @@ func (s *Screen) setCells(from, to, y int, c *uv.Cell) bool {
 	})
 }
 
+// cellsAt copies the cells of row y from column x into dst, as many as the
+// row has, and returns how many it copied.
+func (s *Screen) cellsAt(x, y int, dst []uv.Cell) int {
+	if y < 0 || y >= len(s.buf.Lines) || x < 0 || x > len(s.buf.Lines[y]) {
+		return 0
+	}
+	return copy(dst, s.buf.Lines[y][x:])
+}
+
+// holds reports whether the cell at x on row y holds content, width columns
+// wide.
+func (s *Screen) holds(x, y int, content string, width int) bool {
+	c := s.buf.CellAt(x, y)
+	return c != nil && c.Width == width && c.Content == content
+}
+
+// putCells writes cells that cellsAt copied back over row y from column x as
+// they were, a wide character's placeholder included, which SetCell would
+// mend. Cells that no longer fit the row are not written.
+func (s *Screen) putCells(x, y int, cells []uv.Cell) {
+	if y < 0 || y >= len(s.buf.Lines) || x < 0 || x+len(cells) > len(s.buf.Lines[y]) {
+		return
+	}
+	copy(s.buf.Lines[y][x:], cells)
+	s.buf.TouchLine(x, y, len(cells))
+}
+
 // chargeScan charges, before ultraviolet's SetCell writes over the cell at x
 // on row y, the scan it makes when that cell is a wide character's
 // placeholder (see scanCost). A span charges the cell itself. It reports
