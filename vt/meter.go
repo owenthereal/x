@@ -129,6 +129,10 @@ type meter struct {
 	// last is the work done between the last two calls to stop, which the
 	// tests read.
 	last int
+	// refused counts the charges turned down once stop has returned true,
+	// which the tests read: an operation that goes on asking is spinning
+	// through the work the stop was meant to end.
+	refused int
 }
 
 // spend charges n cell operations the caller is about to do, and reports
@@ -143,6 +147,7 @@ func (m *meter) spend(n int) bool {
 func (m *meter) check(n int) bool {
 	if m.work >= spentWork {
 		m.work = spentWork
+		m.refused++
 		return false
 	}
 	m.last = m.work - n

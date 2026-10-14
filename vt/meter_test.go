@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -348,8 +347,9 @@ func TestNoUnmeteredUltravioletCellCall(t *testing.T) {
 	}
 }
 
-// ESC[100000000b: stopped within one interval of the stop.
+// ESC[65535b, the largest count: stopped within one interval of the stop.
 func TestStopFuncStopsREP(t *testing.T) {
+	lowerMeterInterval(t, 1024)
 	const w = 80
 	e := NewEmulator(w, 24)
 	scrolled := 0
@@ -361,9 +361,7 @@ func TestStopFuncStopsREP(t *testing.T) {
 		return true
 	})
 
-	start := time.Now()
-	_, err := e.WriteString("\x1b[100000000b")
-	elapsed := time.Since(start)
+	_, err := e.WriteString("\x1b[65535b")
 	if !errors.Is(err, ErrStopped) {
 		t.Fatalf("Write: got error %v, want ErrStopped", err)
 	}
@@ -375,11 +373,10 @@ func TestStopFuncStopsREP(t *testing.T) {
 	if printed := scrolled*w + cellsHolding(e, "x"); printed > meterInterval+1 {
 		t.Errorf("%d characters printed, more than the interval of %d past the first", printed, meterInterval)
 	}
-	// The repetitions left must not go on after the stop, printing nothing:
-	// the rest of the 100,000,000 take about half a second, one interval
-	// about a millisecond.
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("Write took %v after the stop: the repetitions went on", elapsed)
+	// The repetitions left must not go on after the stop, printing nothing.
+	// Each would ask the meter for its charge again, and be turned down.
+	if e.meter.refused > 1 {
+		t.Errorf("%d charges turned down after the stop: the repetitions went on", e.meter.refused)
 	}
 }
 
