@@ -48,9 +48,33 @@ func (e *Emulator) handlePrint(r rune) {
 			return
 		}
 		e.flushGrapheme()
+	} else if len(e.grapheme) == 1 {
+		// A character the charset maps is drawn as another, which no
+		// later rune can join: a cluster of more than one byte isn't
+		// mapped, so joining it would undo the mapping. Print it alone,
+		// as it is when a Write ends right after it.
+		if _, ok := e.mapCharset(e.grapheme[0], e.gsingle); ok {
+			e.flushGrapheme()
+		}
 	}
 
 	e.grapheme = utf8.AppendRune(e.grapheme, r)
+}
+
+// mapCharset returns what the character sets draw the one-byte character c
+// as, with the single shift single pending, and whether they map it at all.
+func (e *Emulator) mapCharset(c byte, single int) (string, bool) {
+	var charset CharSet
+	switch {
+	case single > 1 && single < 4:
+		charset = e.charsets[single]
+	case c < 128:
+		charset = e.charsets[e.gl]
+	default:
+		charset = e.charsets[e.gr]
+	}
+	r, ok := charset[c]
+	return r, ok
 }
 
 // flushGrapheme flushes the current grapheme buffer, if any, and handles the
@@ -59,6 +83,9 @@ func (e *Emulator) flushGrapheme() {
 	// Anything but printing between two Writes ends the cluster the first
 	// one finished with, and every sequence handler comes through here.
 	e.carry.valid = false
+	// What an earlier flush printed is not what this one ends with, so the
+	// Write that ends here must not carry it, across whatever came between.
+	e.lastCluster.valid = false
 	if len(e.grapheme) == 0 {
 		return
 	}
@@ -82,7 +109,11 @@ func (e *Emulator) flushGrapheme() {
 // clusterMark records where a cluster was printed, so that the next Write can
 // extend it.
 type clusterMark struct {
-	valid   bool
+	valid bool
+	// dropped is set for a cluster that printed nothing, having no base or
+	// being too wide for the line: there is nothing to undo, and the cells
+	// are as it found them.
+	dropped bool
 	scr     *Screen
 	content string
 	x, y    int // the cluster's cell
@@ -101,6 +132,10 @@ type clusterMark struct {
 	// single byte and sets nothing, so the undo puts this back, leaving what
 	// the same bytes in one Write would.
 	lastChar rune
+	// The single shift pending before the cluster was printed, which its
+	// print took. Joined, the cluster takes it again when it is printed
+	// again, as it would have in one Write, so the undo puts it back.
+	single int
 }
 
 // maxCarriedCluster bounds the cluster resumeCluster extends. Rejoining costs
@@ -110,9 +145,9 @@ type clusterMark struct {
 const maxCarriedCluster = 128
 
 // resumeCluster takes back the cluster the previous Write ended with when r
-// extends it, so a cluster split across two Writes lands in one cell, as it
-// would have arriving in one. It applies only if nothing but printing has
-// happened since.
+// extends it, so a cluster split across two Writes lands in one cell, or is
+// dropped whole for having no base, as it would have arriving in one. It
+// applies only if nothing but printing has happened since.
 func (e *Emulator) resumeCluster(r rune) {
 	c := e.carry
 	e.carry.valid = false
@@ -126,6 +161,17 @@ func (e *Emulator) resumeCluster(r rune) {
 	if cluster, _ := ansi.FirstGraphemeCluster(joined, ansi.GraphemeWidth); len(cluster) != len(joined) {
 		return
 	}
+	if !c.dropped && !e.undoCluster(c) {
+		return
+	}
+	e.lastChar = c.lastChar
+	e.gsingle = c.single
+	e.grapheme = append(e.grapheme[:0], c.content...)
+}
+
+// undoCluster takes the printed cluster c off the screen, putting the cursor
+// back where it was printed. It reports false if the meter stopped it.
+func (e *Emulator) undoCluster(c clusterMark) bool {
 	switch {
 	case len(c.under) > 0 && e.scr.holds(c.x, c.y, c.content, c.width):
 		// Put back what the cluster wrote over at the last column. An
@@ -133,29 +179,28 @@ func (e *Emulator) resumeCluster(r rune) {
 		// cell no longer holds the cluster, what it wrote over has gone
 		// with it, and the cell is blanked as anywhere else.
 		if !e.meter.spend(len(c.under)) {
-			return
+			return false
 		}
 		e.scr.putCells(c.x+1-len(c.under), c.y, c.under)
 	case e.insertMode:
 		// Undo the insert that made room for it.
 		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), e.scr.scroll) {
-			return
+			return false
 		}
 	default:
 		if !e.meter.spend(c.width) {
-			return
+			return false
 		}
 		for i := range c.width {
 			if !e.scr.chargeScan(c.x+i, c.y) {
-				return
+				return false
 			}
 			e.scr.SetCell(c.x+i, c.y, nil)
 		}
 	}
 	e.scr.setCursor(c.x, c.y, false)
 	e.atPhantom = false
-	e.lastChar = c.lastChar
-	e.grapheme = append(e.grapheme[:0], c.content...)
+	return true
 }
 
 // handleGrapheme handles UTF-8 graphemes.
@@ -165,6 +210,18 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// combining mark after a control. Stored, it would be a zero-width
 		// cell, which reads as the tail of a wide character; drop it, as a
 		// terminal with nothing to attach it to does.
+		//
+		// The segmenter ended the cluster printed before it here, so
+		// nothing after it joins that one. It can join this one, though:
+		// in one Write a spacing mark after it is dropped with it, and
+		// VS16 gives it a width. Remember it as a cluster that printed
+		// nothing, for the next Write to extend.
+		x, y := e.scr.CursorPosition()
+		e.lastCluster = clusterMark{
+			valid: true, dropped: true, scr: e.scr, content: content,
+			curX: x, curY: y, phantom: e.atPhantom,
+			lastChar: e.lastChar, single: e.gsingle,
+		}
 		return
 	}
 	awm := e.isModeSet(ansi.ModeAutoWrap)
@@ -195,22 +252,10 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	e.gsingle = 0
 
 	// Handle character set mappings
-	if len(content) == 1 { //nolint:nestif
-		var charset CharSet
-		c := content[0]
-		if single > 1 && single < 4 {
-			charset = e.charsets[single]
-		} else if c < 128 {
-			charset = e.charsets[e.gl]
-		} else {
-			charset = e.charsets[e.gr]
-		}
-
-		if charset != nil {
-			if r, ok := charset[c]; ok {
-				cell.Content = r
-				cell.Width = 1
-			}
+	if len(content) == 1 {
+		if r, ok := e.mapCharset(content[0], single); ok {
+			cell.Content = r
+			cell.Width = 1
 		}
 	}
 
@@ -223,11 +268,18 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	// margin, as xterm's dotext writes a character only where it fits: under
 	// DECAWM it wraps first, leaving the last column as it was, and without,
 	// or when no line is wide enough for it, it isn't printed. Either way it
-	// leaves no wrap pending, and nothing the next Write can extend.
+	// leaves no wrap pending.
 	if cell.Width > 1 && x+cell.Width > e.scr.Width() {
 		if !awm || cell.Width > e.scr.Width() {
 			e.atPhantom = false
-			e.lastCluster.valid = false
+			// A mark the next Write begins with joins it, unprinted, as in
+			// one Write, rather than being printed on its own, as a spacing
+			// mark would be, or dropped.
+			cx, cy := e.scr.CursorPosition()
+			e.lastCluster = clusterMark{
+				valid: true, dropped: true, scr: e.scr, content: content,
+				curX: cx, curY: cy, lastChar: before, single: single,
+			}
 			return
 		}
 		e.index()
@@ -277,6 +329,6 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		// A cluster a charset mapped is not one the next Write can extend.
 		valid: cell.Content == content, scr: e.scr, content: content, x: cx, y: cy, width: cell.Width,
 		curX: e.scr.cur.X, curY: e.scr.cur.Y, phantom: e.atPhantom,
-		under: under, lastChar: before,
+		under: under, lastChar: before, single: single,
 	}
 }

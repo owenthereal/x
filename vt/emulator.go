@@ -271,7 +271,9 @@ func (e *Emulator) Resize(width int, height int) {
 	if e.meter.spent() {
 		return
 	}
-	e.carry.valid = false
+	// A resize ends the cluster the last Write printed: a mark in the next
+	// Write doesn't join it, and nothing that Write drops can carry it.
+	e.carry.valid, e.lastCluster.valid = false, false
 	if !e.scrs[0].resize(width, height, true) {
 		return
 	}

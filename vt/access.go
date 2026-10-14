@@ -73,6 +73,41 @@ func (e *Emulator) Partial() int {
 	return e.partial
 }
 
+// GroundPrefix returns the length of the longest prefix of b after which the
+// parser, continuing from where the bytes written so far left it, would be
+// at a boundary (see [Emulator.AtBoundary]). It writes nothing and changes
+// nothing.
+func (e *Emulator) GroundPrefix(b []byte) int {
+	return e.parser.GroundPrefix(b)
+}
+
+// HandoffPrefix returns the length of the longest prefix of b that ends at a
+// boundary right after an action that isn't a print: a control executed, or
+// a sequence or string dispatched. Each of those ends the cluster being
+// printed, so after that prefix the emulator carries none that a later byte
+// could extend (see [Emulator.Carrying]). A string CAN or SUB aborts, and a
+// CSI the parser ignores, end nothing and don't count; neither does REP,
+// which prints. It is 0 if no prefix does, and like GroundPrefix it writes
+// nothing and changes nothing.
+func (e *Emulator) HandoffPrefix(b []byte) int {
+	return e.parser.HandoffPrefix(b)
+}
+
+// Carrying reports whether the emulator holds a cluster that the next Write
+// could still extend: the last Write ended in printing, and nothing but
+// printing has happened since. A mark at the start of the next Write then
+// joins that cluster, as it would have arriving in the same Write. A cluster
+// dropped for having no base counts: what joins it is dropped with it, or
+// printed with it when it gives the cluster a width. So does one too wide
+// for the line, which wasn't printed: what joins it isn't printed either,
+// where a spacing mark on its own would be.
+func (e *Emulator) Carrying() bool {
+	// Between Writes the cursor and the screen are where the cluster left
+	// them, so of resumeCluster's conditions only the bound on its length
+	// and the rune that comes next can refuse it.
+	return e.carry.valid && len(e.carry.content) < maxCarriedCluster
+}
+
 // Mode returns the setting of a mode, or [ansi.ModeNotRecognized] for a mode
 // the program never set and the emulator has no default for.
 func (e *Emulator) Mode(m ansi.Mode) ansi.ModeSetting {
