@@ -46,19 +46,10 @@ func (s *Screen) Line(y int) uv.Line {
 }
 
 // PendingWrap reports whether the cursor sits past the last column, so the
-// next printed character wraps to the next line first.
+// next printed character wraps to the next line first. Like the cursor, the
+// wrap is the terminal's, whichever screen shows.
 func (e *Emulator) PendingWrap() bool {
 	return e.atPhantom
-}
-
-// MainPendingWrap reports whether the main screen's cursor has a wrap
-// pending, whichever screen is active: while the alternate screen is, it is
-// the one leaving it restores.
-func (e *Emulator) MainPendingWrap() bool {
-	if e.scr == &e.scrs[0] {
-		return e.atPhantom
-	}
-	return e.mainPhantom
 }
 
 // AtBoundary reports whether the bytes written so far end between sequences:

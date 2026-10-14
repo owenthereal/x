@@ -100,10 +100,10 @@ func TestED3KeepsAPendingWrap(t *testing.T) {
 			steps: []step{{"x", uv.Pos(1, 2)}},
 		},
 		{
-			// The main screen's wrap stays pending behind the alternate
-			// screen, and comes back with it.
+			// The main screen's wrap, which ?1049h saved, comes back with
+			// ?1049l.
 			name:  "alternate screen",
-			setup: "a\r\n0123456789\x1b[?1049h0123456789",
+			setup: "a\r\n0123456789\x1b[?1049h\x1b[H0123456789",
 			steps: []step{{"x", uv.Pos(1, 1)}, {"\x1b[?1049ly", uv.Pos(1, 2)}},
 		},
 	} {
@@ -115,15 +115,10 @@ func TestED3KeepsAPendingWrap(t *testing.T) {
 					t.Fatal("no wrap pending after the setup")
 				}
 			}
-			mainPending := with.MainPendingWrap()
-
 			with.WriteString("\x1b[3J")
 
 			if !with.PendingWrap() {
 				t.Error("wrap no longer pending after ED 3")
-			}
-			if got := with.MainPendingWrap(); got != mainPending {
-				t.Errorf("main screen's pending wrap after ED 3: got = %v, want = %v", got, mainPending)
 			}
 
 			for _, s := range tc.steps {

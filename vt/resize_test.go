@@ -26,10 +26,13 @@ func lineTexts(lines []uv.Line) []string {
 }
 
 // aroundTheResize runs a resize on the main screen, and on the main screen
-// kept behind the alternate one by a ?1049 trip around it.
+// kept behind the alternate one by a ?1049 trip around it, with the
+// alternate screen's cursor moved home, off the row the main screen keeps,
+// and by a ?47 trip, which carries the cursor and its wrap back.
 var aroundTheResize = []struct{ name, before, after string }{
 	{"main screen", "", ""},
-	{"behind ?1049", "\x1b[?1049h", "\x1b[?1049l"},
+	{"behind ?1049", "\x1b[?1049h\x1b[H", "\x1b[?1049l"},
+	{"behind ?47", "\x1b[?47h", "\x1b[?47l"},
 }
 
 // A height shrink with the cursor on the last row moves rows from the top
@@ -189,18 +192,15 @@ func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 	}
 }
 
-// A resize leaves a pending wrap pending, on the active screen and on the
-// main screen kept behind the alternate one: xterm's ScreenResize does not
-// touch do_wrap.
+// A resize leaves a pending wrap pending, whichever screen shows, and the one
+// ?1049h saved in the main screen's slot too: xterm's ScreenResize does not
+// touch do_wrap, nor a slot's wrap_flag.
 func TestResizeKeepsThePendingWrap(t *testing.T) {
 	for _, tc := range aroundTheResize {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(10, 2)
 			e.WriteString(strings.Repeat("x", 10) + tc.before)
 			e.Resize(10, 4)
-			if !e.MainPendingWrap() {
-				t.Error("MainPendingWrap after the resize: got = false, want = true")
-			}
 			e.WriteString(tc.after)
 			if !e.PendingWrap() {
 				t.Errorf("PendingWrap: got = false, want = true (cursor %v)", e.CursorPosition())

@@ -26,6 +26,11 @@ type Emulator struct {
 	scrs [2]Screen
 	scr  *Screen
 
+	// The scroll region, which is the terminal's, not a screen's: both
+	// screens use it, and no switch between them changes it, as xterm keeps
+	// its margins in TScreen, beside the buffer it shows.
+	scroll uv.Rectangle
+
 	// Character sets, and the final byte of the SCS sequence that designated
 	// each (0 for the default, ASCII).
 	charsets     [4]CharSet
@@ -92,11 +97,8 @@ type Emulator struct {
 
 	// atPhantom indicates if the cursor is out of bounds.
 	// When true, and a character is written, the cursor is moved to the next line.
+	// Like the cursor, it is the terminal's: switching screens leaves it.
 	atPhantom bool
-
-	// mainPhantom is the main screen's atPhantom while the alternate
-	// screen is active.
-	mainPhantom bool
 
 	// meter counts the work of every operation, for the stop function. Both
 	// screens count on it.
@@ -115,6 +117,9 @@ func NewEmulator(w, h int) *Emulator {
 	t.scrs[1].cb = &t.cb
 	t.scrs[0].meter = &t.meter
 	t.scrs[1].meter = &t.meter
+	t.scrs[0].scroll = &t.scroll
+	t.scrs[1].scroll = &t.scroll
+	t.scroll = t.scrs[0].Bounds()
 	t.parser = ansi.NewParser()
 	t.parser.SetParamsSize(parser.MaxParamsSize)
 	t.parser.SetDataSize(1024 * 1024 * 4) // 4MB data buffer
@@ -259,10 +264,12 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 }
 
 // Resize resizes the terminal, following xterm's ScreenResize. Each screen
-// keeps its cursor's row (see [Screen.Resize]); the rows the alternate screen
-// loses at the top are discarded, not moved into history. The cursors are
-// only kept on the screen, a wrap pending on either screen stays pending, and
-// the margins and origin mode are reset.
+// keeps its cursor's row (see [Screen.Resize]): the screen showing keeps the
+// cursor's, and the main screen behind the alternate one the row the cursor
+// was on when they switched. The rows the alternate screen loses at the top
+// are discarded, not moved into history. The cursors are only kept on the
+// screen, a pending wrap stays pending, and the margins and origin mode are
+// reset.
 //
 // A resize is metered like any operation: a stop inside it spends the
 // emulator, and the next Write returns [ErrStopped].
