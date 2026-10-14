@@ -145,6 +145,31 @@ func TestCsiSequence(t *testing.T) {
 			},
 		},
 		{
+			// A control inside a CSI is executed at once, and the sequence
+			// goes on with its parameters and command, as in xterm, whose
+			// CSI tables run a C0 and keep their state: a CUP cut by a
+			// newline is the newline, then the CUP.
+			name:  "control_inside",
+			input: "\x1b[2;\n5H\x1b[?\r25h\x1b[1 \x07q",
+			expected: []any{
+				byte('\n'),
+				csiSequence{
+					Params: Params{2, 5},
+					Cmd:    'H',
+				},
+				byte('\r'),
+				csiSequence{
+					Params: Params{25},
+					Cmd:    'h' | '?'<<parser.PrefixShift,
+				},
+				byte('\a'),
+				csiSequence{
+					Params: Params{1},
+					Cmd:    'q' | ' '<<parser.IntermedShift,
+				},
+			},
+		},
+		{
 			name:  "reset",
 			input: "\x1b[3;1\x1b[?1049h",
 			expected: []any{
