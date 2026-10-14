@@ -1478,7 +1478,7 @@ var cases = []struct {
 		},
 		want: []string{
 			"        ",
-			"        ",
+			"  F     ",
 			"GHI     ",
 		},
 		pos: uv.Pos(1, 1),

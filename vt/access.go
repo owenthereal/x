@@ -45,9 +45,12 @@ func (s *Screen) Line(y int) uv.Line {
 	return s.buf.Line(y)
 }
 
-// PendingWrap reports whether the cursor sits past the last column, so the
-// next printed character wraps to the next line first. Like the cursor, the
-// wrap is the terminal's, whichever screen shows.
+// PendingWrap reports whether a wrap is pending, so the next printed
+// character wraps to the next line first if DECAWM is set by then; without
+// it, the character takes the flag and is written at the cursor. A character
+// that reaches the last column leaves one, with or without DECAWM, and, as in
+// xterm, CBT keeps it as it moves the cursor left. Like the cursor, the wrap
+// is the terminal's, whichever screen shows.
 func (e *Emulator) PendingWrap() bool {
 	return e.atPhantom
 }

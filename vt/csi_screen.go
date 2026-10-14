@@ -19,3 +19,14 @@ func (e *Emulator) eraseCharacter(n int) {
 	e.atPhantom = false
 	// ECH does not move the cursor.
 }
+
+// clearWrapInMargins clears the pending wrap after [ansi.ICH] or [ansi.DCH]
+// when the cursor is inside the left and right margins, as xterm's
+// InsertChar and DeleteChar do. Outside them the shift does nothing, and
+// xterm returns before it resets the wrap.
+func (e *Emulator) clearWrapInMargins() {
+	x, _ := e.scr.CursorPosition()
+	if scroll := e.scr.ScrollRegion(); x >= scroll.Min.X && x < scroll.Max.X {
+		e.atPhantom = false
+	}
+}

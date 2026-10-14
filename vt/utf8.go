@@ -323,9 +323,10 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 
 	// A character that reaches the last column leaves the wrap pending, as
 	// dotext does for one that fills the rest of the line, whatever its
-	// width; setCursor holds the cursor on the last column.
+	// width, and with or without DECAWM: the next character wraps only if
+	// DECAWM is set by then. setCursor holds the cursor on the last column.
 	x += cell.Width
-	e.atPhantom = awm && x >= e.scr.Width()
+	e.atPhantom = x >= e.scr.Width()
 
 	// NOTE: We don't reset the phantom state here, we handle it up above.
 	e.scr.setCursor(x, y, false)

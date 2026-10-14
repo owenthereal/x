@@ -128,6 +128,14 @@ func (e *Emulator) setMode(mode ansi.Mode, setting ansi.ModeSetting) {
 		// Setting or resetting DECOM homes the cursor, to the scroll
 		// region's corner or the screen's.
 		e.setCursorPosition(0, 0)
+	case ansi.ModeLeftRightMargin:
+		// Resetting DECLRMM resets the left and right margins, as xterm's
+		// set_left_right_margin_mode does, so that scrolls, ICH and DCH,
+		// and the cursor's moves span every column again. The cursor
+		// stays.
+		if !setting.IsSet() {
+			e.scr.setHorizontalMargins(0, e.Width())
+		}
 	case ansi.ModeTextCursorEnable:
 		e.scr.setCursorHidden(!setting.IsSet())
 	case modeAltBuffer:
