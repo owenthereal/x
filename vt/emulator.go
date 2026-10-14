@@ -41,8 +41,10 @@ type Emulator struct {
 	// Terminal modes.
 	modes ansi.Modes
 
-	// The last written character.
-	lastChar rune // either ansi.Rune or ansi.Grapheme
+	// The character REP repeats: the last one printed whose input was a
+	// single byte of width 1, before a character set maps it, so always
+	// ASCII. RIS clears it.
+	lastChar rune
 	// The bytes of a grapheme cluster still being composed. Bytes rather than
 	// runes, so the segmenter can read the buffer without a conversion on
 	// every character.

@@ -89,3 +89,26 @@ func (e *Emulator) Charsets() (designations [4]byte, gl, gr int) {
 	}
 	return designations, e.gl, e.gr
 }
+
+// TabStops returns the columns that have a tab stop, ascending. The slice is
+// the caller's.
+func (e *Emulator) TabStops() []int {
+	// The scan is as wide as the screen, and not charged to the work meter:
+	// it runs outside Write and Resize, at the caller's pace, over a width
+	// only the caller sets.
+	var stops []int
+	for x := range e.tabstops.Width() {
+		if e.tabstops.IsStop(x) {
+			stops = append(stops, x)
+		}
+	}
+	return stops
+}
+
+// LastChar returns the character [ansi.REP] repeats: the last one printed
+// whose input was a single byte of width 1, taken before the character set
+// maps it, so it is always ASCII. It is 0 if none has been printed since the
+// emulator started or was last reset with RIS; DECSTR leaves it.
+func (e *Emulator) LastChar() rune {
+	return e.lastChar
+}
