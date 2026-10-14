@@ -110,10 +110,14 @@ func (e *Emulator) flushGrapheme() {
 // extend it.
 type clusterMark struct {
 	valid bool
-	// dropped is set for a cluster with no base, which printed nothing:
-	// there is nothing to undo, and the cursor and the cells are as it
-	// found them.
+	// dropped is set for a cluster that printed nothing, having no base or
+	// being too wide for the line: there is nothing to undo, and the cells
+	// are as it found them.
 	dropped bool
+	// tooWide is set for a cluster too wide for the line. Joining never
+	// narrows a cluster, so what the next Write adds to it isn't printed
+	// either, and the carry changes nothing the next Write shows.
+	tooWide bool
 	scr     *Screen
 	content string
 	x, y    int // the cluster's cell
@@ -268,11 +272,17 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	// margin, as xterm's dotext writes a character only where it fits: under
 	// DECAWM it wraps first, leaving the last column as it was, and without,
 	// or when no line is wide enough for it, it isn't printed. Either way it
-	// leaves no wrap pending, and nothing the next Write can extend.
+	// leaves no wrap pending.
 	if cell.Width > 1 && x+cell.Width > e.scr.Width() {
 		if !awm || cell.Width > e.scr.Width() {
 			e.atPhantom = false
-			e.lastCluster.valid = false
+			// A mark the next Write begins with joins it, unprinted, as in
+			// one Write, rather than being dropped and carried on its own.
+			cx, cy := e.scr.CursorPosition()
+			e.lastCluster = clusterMark{
+				valid: true, dropped: true, tooWide: true, scr: e.scr, content: content,
+				curX: cx, curY: cy, lastChar: before, single: single,
+			}
 			return
 		}
 		e.index()

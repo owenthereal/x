@@ -260,6 +260,47 @@ func TestABaseLessClusterIsCarried(t *testing.T) {
 	}
 }
 
+// A cluster too wide for the line isn't printed, but the next Write can still
+// extend it, as the same bytes in one Write would: a mark it begins with joins
+// the cluster, unprinted, rather than being dropped and carried on its own.
+// Joining never narrows a cluster, so nothing the next Write adds can make it
+// fit, and Carrying reports nothing.
+func TestAClusterTooWideToPrintIsCarried(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		w      int
+		chunks []string
+		row    string
+	}{
+		{"wider than the screen", 1, []string{"世", "\u0301"}, ""},
+		{"wider than the screen, the mark's bytes cut", 1, []string{"世\xcc", "\x81"}, ""},
+		{"wider than the screen, a mark each Write", 1, []string{"世", "\u0301", "\u0302"}, ""},
+		{"wider than the screen, after a single shift", 1, []string{"\x1bN世", "\u0301"}, ""},
+		{"past the last column without autowrap", 5, []string{"\x1b[?7labcd世", "\u0301"}, "abcd"},
+		{"an emoji and VS15", 5, []string{"\x1b[?7labcd\U0001F600", "\ufe0e"}, "abcd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			whole := NewEmulator(tc.w, 1)
+			whole.WriteString(strings.Join(tc.chunks, ""))
+			split := NewEmulator(tc.w, 1)
+			for _, c := range tc.chunks {
+				split.WriteString(c)
+			}
+			if diff := splitDiff(whole, split); diff != "" {
+				t.Error(diff)
+			}
+			for name, e := range map[string]*Emulator{"one Write": whole, "split": split} {
+				if got := rowText(e, 0); got != tc.row {
+					t.Errorf("%s: row: got = %q, want = %q", name, got, tc.row)
+				}
+				if e.Carrying() {
+					t.Errorf("%s: Carrying: got = true, want = false", name)
+				}
+			}
+		})
+	}
+}
+
 // A character a charset maps is a cluster of its own, whether a mark after it
 // comes in the same Write or the next: the charset draws the byte as another
 // character, and a cluster of more than one byte isn't mapped, so joined to
@@ -370,6 +411,11 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		// The lookahead's.
 		{10, 3, []string{"x", "\x1b[b", "\u0301"}},
 		{10, 3, []string{"e", "\x1b]0;x\x18", "\u0301"}},
+		// TestAClusterTooWideToPrintIsCarried.
+		{1, 1, []string{"世", "\u0301"}},
+		{1, 1, []string{"世\xcc", "\x81"}},
+		{1, 1, []string{"\x1bN世", "\u0301"}},
+		{5, 1, []string{"\x1b[?7labcd\U0001F600", "\ufe0e"}},
 		// Past the bound: one Write joins the mark, split doesn't.
 		{10, 1, []string{"e" + strings.Repeat("\u0301", 64), "\u0301"}},
 	} {
