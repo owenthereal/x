@@ -267,3 +267,29 @@ func TestAControlInsideACSIRunsAndTheCSIGoesOn(t *testing.T) {
 		})
 	}
 }
+
+// util.c's InsertLine and DeleteLine set only the column, to the left margin
+// (set_cur_col(screen, ScrnLeftMargin(xw)) at :1650 and :1760), and leave
+// the row: with a region from row 4, IL and DL on row 6 leave the cursor on
+// row 6, with or without origin mode, not 4 rows below it.
+func TestInsertAndDeleteLineKeepTheRow(t *testing.T) {
+	for _, tc := range []struct {
+		name, prep string
+		want       uv.Position
+	}{
+		{"no margins but the top and bottom", "\x1b[5;20r\x1b[7;4H", uv.Pos(0, 6)},
+		// CUP 3;2 under origin mode is column 3 of row 6 on the screen.
+		{"origin mode", "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[3;2H", uv.Pos(2, 6)},
+		{"a left margin", "\x1b[5;20r\x1b[?69h\x1b[3;8s\x1b[7;4H", uv.Pos(2, 6)},
+	} {
+		for _, op := range []struct{ name, seq string }{{"IL", "\x1b[L"}, {"DL", "\x1b[M"}} {
+			t.Run(tc.name+"/"+op.name, func(t *testing.T) {
+				e := newTestTerminal(t, 10, 24)
+				_, _ = e.WriteString(tc.prep + op.seq)
+				if got := e.CursorPosition(); got != tc.want {
+					t.Errorf("cursor: got = %v, want = %v", got, tc.want)
+				}
+			})
+		}
+	}
+}
