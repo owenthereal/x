@@ -272,8 +272,9 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	// A wide character the rest of the line can't hold isn't cut at the
 	// margin, as xterm's dotext writes a character only where it fits: under
 	// DECAWM it wraps first, leaving the last column as it was, and without,
-	// or when no line is wide enough for it, it isn't printed. Either way it
-	// leaves no wrap pending.
+	// or when no line is wide enough for it, it isn't printed. Not printed,
+	// it leaves no wrap pending; wrapped, it is printed on the next line,
+	// which leaves one if it fills that line.
 	if cell.Width > 1 && x+cell.Width > e.scr.Width() {
 		if !awm || cell.Width > e.scr.Width() {
 			e.atPhantom = false
