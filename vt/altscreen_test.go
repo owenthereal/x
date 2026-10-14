@@ -310,10 +310,11 @@ func TestDECSTBMFollowsXterm(t *testing.T) {
 	}
 }
 
-// Spec A17: the margins are TScreen's top_marg and bot_marg, which
-// SwitchBufs leaves, so a region set on either screen is the one line feeds
-// scroll on the other after a switch, in both directions. Rows scrolled out
-// of a region whose top is below the first row reach no history (P5).
+// The margins are TScreen's top_marg and bot_marg, which SwitchBufs leaves,
+// so a region set on either screen is the one line feeds scroll on the other
+// after a switch, in both directions. Rows scrolled out of a region whose top
+// is below the first row reach no history, as xtermScroll saves lines only
+// when top_marg is 0.
 func TestMarginsSurviveBufferSwitches(t *testing.T) {
 	const w, h = 10, 8
 	for _, sw := range []struct{ name, on, off string }{
