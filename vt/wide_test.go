@@ -99,8 +99,8 @@ func TestAWideCharacterWithoutAutowrapIsNotPrinted(t *testing.T) {
 	}{
 		// The "e" left a wrap pending under DECAWM, which ?7l doesn't clear.
 		{"over a character, with a wrap pending", []string{"abcde\x1b[?7l", "日"}, wideState{[]string{"abcde", ""}, uv.Pos(4, 0), false}},
-		// The mark has nothing printed to join: not the 日, which wasn't,
-		// nor the "e" before it.
+		// The mark joins the 日, which wasn't printed, so it isn't printed
+		// either; the "e" before the 日 is a cluster of its own.
 		{"a mark in the next Write", []string{"\x1b[?7labcd", "e日", "\u0301"}, wideState{[]string{"abcde", ""}, uv.Pos(4, 0), false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -114,10 +114,6 @@ type clusterMark struct {
 	// being too wide for the line: there is nothing to undo, and the cells
 	// are as it found them.
 	dropped bool
-	// tooWide is set for a cluster too wide for the line. Joining never
-	// narrows a cluster, so what the next Write adds to it isn't printed
-	// either, and the carry changes nothing the next Write shows.
-	tooWide bool
 	scr     *Screen
 	content string
 	x, y    int // the cluster's cell
@@ -277,10 +273,11 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		if !awm || cell.Width > e.scr.Width() {
 			e.atPhantom = false
 			// A mark the next Write begins with joins it, unprinted, as in
-			// one Write, rather than being dropped and carried on its own.
+			// one Write, rather than being printed on its own, as a spacing
+			// mark would be, or dropped.
 			cx, cy := e.scr.CursorPosition()
 			e.lastCluster = clusterMark{
-				valid: true, dropped: true, tooWide: true, scr: e.scr, content: content,
+				valid: true, dropped: true, scr: e.scr, content: content,
 				curX: cx, curY: cy, lastChar: before, single: single,
 			}
 			return

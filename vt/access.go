@@ -98,14 +98,14 @@ func (e *Emulator) HandoffPrefix(b []byte) int {
 // printing has happened since. A mark at the start of the next Write then
 // joins that cluster, as it would have arriving in the same Write. A cluster
 // dropped for having no base counts: what joins it is dropped with it, or
-// printed with it when it gives the cluster a width. A cluster too wide for
-// the line doesn't: nothing joined to it can make it fit, so the next Write
-// shows the same whether it joins or not.
+// printed with it when it gives the cluster a width. So does one too wide
+// for the line, which wasn't printed: what joins it isn't printed either,
+// where a spacing mark on its own would be.
 func (e *Emulator) Carrying() bool {
 	// Between Writes the cursor and the screen are where the cluster left
 	// them, so of resumeCluster's conditions only the bound on its length
 	// and the rune that comes next can refuse it.
-	return e.carry.valid && !e.carry.tooWide && len(e.carry.content) < maxCarriedCluster
+	return e.carry.valid && len(e.carry.content) < maxCarriedCluster
 }
 
 // Mode returns the setting of a mode, or [ansi.ModeNotRecognized] for a mode

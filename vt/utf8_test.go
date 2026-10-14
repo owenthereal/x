@@ -263,9 +263,8 @@ func TestABaseLessClusterIsCarried(t *testing.T) {
 
 // A cluster too wide for the line isn't printed, but the next Write can still
 // extend it, as the same bytes in one Write would: a mark it begins with joins
-// the cluster, unprinted, rather than being dropped and carried on its own.
-// Joining never narrows a cluster, so nothing the next Write adds can make it
-// fit, and Carrying reports nothing.
+// the cluster, unprinted, where on its own a spacing mark would be printed and
+// any other mark dropped and carried. So Carrying reports it.
 func TestAClusterTooWideToPrintIsCarried(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -279,6 +278,11 @@ func TestAClusterTooWideToPrintIsCarried(t *testing.T) {
 		{"wider than the screen, after a single shift", 1, []string{"\x1bN世", "\u0301"}, ""},
 		{"past the last column without autowrap", 5, []string{"\x1b[?7labcd世", "\u0301"}, "abcd"},
 		{"an emoji and VS15", 5, []string{"\x1b[?7labcd\U0001F600", "\ufe0e"}, "abcd"},
+		// A spacing mark joined to the cluster isn't printed; on its own
+		// it would be.
+		{"wider than the screen, a spacing mark", 1, []string{"世", "\u093f"}, ""},
+		{"past the last column, a spacing mark", 5, []string{"\x1b[?7labcd世", "\u093f"}, "abcd"},
+		{"an emoji past the last column, a spacing mark", 5, []string{"\x1b[?7labcd\U0001F600", "\u093f"}, "abcd"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			whole := NewEmulator(tc.w, 1)
@@ -294,8 +298,8 @@ func TestAClusterTooWideToPrintIsCarried(t *testing.T) {
 				if got := rowText(e, 0); got != tc.row {
 					t.Errorf("%s: row: got = %q, want = %q", name, got, tc.row)
 				}
-				if e.Carrying() {
-					t.Errorf("%s: Carrying: got = true, want = false", name)
+				if !e.Carrying() {
+					t.Errorf("%s: Carrying: got = false, want = true", name)
 				}
 			}
 		})
