@@ -298,8 +298,8 @@ func TestAResizeKeepsTheSavedCursor(t *testing.T) {
 	}
 }
 
-// A width change truncates each row (D5) and a growth adds blank cells, not
-// zero ones, which would read as the tails of wide characters.
+// A width change truncates each row, and a growth adds blank cells, not zero
+// ones, which would read as the tails of wide characters.
 func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 	e := NewEmulator(6, 2)
 	e.WriteString("abcdef\r\nghijkl")
