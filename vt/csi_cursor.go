@@ -10,6 +10,10 @@ import (
 func (e *Emulator) nextTab(n int) {
 	x, y := e.scr.CursorPosition()
 	scroll := e.scr.ScrollRegion()
+	// Each tab moves the cursor at least a column, until it is in the last,
+	// where a tab leaves it. A count past the columns to its right moves it
+	// no further, and would only spin there.
+	n = min(n, e.Width()-1-x)
 	for range n {
 		ts := e.tabstops.Next(x)
 		if ts < x {
@@ -40,6 +44,9 @@ func (e *Emulator) prevTab(n int) {
 		leftmargin = scroll.Min.X
 	}
 
+	// Each tab moves the cursor at least a column, until it is in the first,
+	// where a tab leaves it: a count past the columns to its left only spins.
+	n = min(n, x)
 	for range n {
 		ts := e.tabstops.Prev(x)
 		if ts > x {

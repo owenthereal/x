@@ -265,16 +265,17 @@ func (s *Screen) moveCursor(dx, dy int) {
 		scroll.Max.X = s.buf.Width()
 	}
 
-	pt := uv.Pos(s.cur.X+dx, s.cur.Y+dy)
-
-	var x, y int
+	area := s.buf.Bounds()
 	if old.In(scroll) {
-		y = ordered.Clamp(pt.Y, scroll.Min.Y, scroll.Max.Y-1)
-		x = ordered.Clamp(pt.X, scroll.Min.X, scroll.Max.X-1)
-	} else {
-		y = ordered.Clamp(pt.Y, 0, s.buf.Height()-1)
-		x = ordered.Clamp(pt.X, 0, s.buf.Width()-1)
+		area = scroll
 	}
+
+	// The cursor stops at an edge of the area, so a count past the distance to
+	// it moves the cursor no further. Clamping the count to the distance first
+	// also keeps a huge one from overflowing the sum.
+	dx = ordered.Clamp(dx, area.Min.X-old.X, area.Max.X-1-old.X)
+	dy = ordered.Clamp(dy, area.Min.Y-old.Y, area.Max.Y-1-old.Y)
+	x, y := old.X+dx, old.Y+dy
 
 	s.cur.X, s.cur.Y = x, y
 
@@ -365,6 +366,10 @@ func (s *Screen) InsertCell(n int) {
 	}
 
 	x, y := s.cur.X, s.cur.Y
+	// Cells pushed past the right margin are lost, so a count past the
+	// distance to it inserts no more. Outside the margins nothing is inserted,
+	// whatever the count.
+	n = min(n, max(s.scroll.Max.X-x, 1))
 	s.buf.InsertCellArea(x, y, n, s.blankCell(), s.scroll)
 }
 
@@ -376,6 +381,10 @@ func (s *Screen) DeleteCell(n int) {
 	}
 
 	x, y := s.cur.X, s.cur.Y
+	// Cells are deleted up to the right margin, so a count past the distance
+	// to it deletes no more. Outside the margins nothing is deleted, whatever
+	// the count.
+	n = min(n, max(s.scroll.Max.X-x, 1))
 	s.buf.DeleteCellArea(x, y, n, s.blankCell(), s.scroll)
 }
 
@@ -385,6 +394,7 @@ func (s *Screen) DeleteCell(n int) {
 func (s *Screen) ScrollUp(n int) {
 	x, y := s.CursorPosition()
 	s.setCursor(s.cur.X, 0, true)
+	// From the top margin, DeleteLine clamps n to the region's height.
 	s.DeleteLine(n)
 	s.setCursor(x, y, false)
 }
@@ -395,6 +405,7 @@ func (s *Screen) ScrollUp(n int) {
 func (s *Screen) ScrollDown(n int) {
 	x, y := s.CursorPosition()
 	s.setCursor(s.cur.X, 0, true)
+	// From the top margin, InsertLine clamps n to the region's height.
 	s.InsertLine(n)
 	s.setCursor(x, y, false)
 }
@@ -415,6 +426,10 @@ func (s *Screen) InsertLine(n int) bool {
 		x < s.scroll.Min.X || x >= s.scroll.Max.X {
 		return false
 	}
+
+	// Rows pushed past the bottom margin are lost, so a count past the
+	// distance to it inserts no more.
+	n = min(n, s.scroll.Max.Y-y)
 
 	if s.scrollsFullWidth() {
 		s.insertRows(y, n)
@@ -444,6 +459,10 @@ func (s *Screen) DeleteLine(n int) bool {
 		x < scroll.Min.X || x >= scroll.Max.X {
 		return false
 	}
+
+	// Rows are deleted up to the bottom margin, so a count past the distance
+	// to it deletes no more.
+	n = min(n, scroll.Max.Y-y)
 
 	fullWidth := s.scrollsFullWidth()
 
