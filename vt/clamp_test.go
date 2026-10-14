@@ -8,9 +8,9 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
-// hugeCount is a count past anything a screen can reach. It is not 2^31-1,
-// which is x/ansi's missing-parameter sentinel (ParamMask): that reads as the
-// default count.
+// hugeCount is a count past anything a screen can reach. The parser keeps it
+// at 65,535, the largest parameter, as xterm does, which is still past
+// anything an 80x24 screen can reach.
 const hugeCount = 1_000_000_000
 
 // clampOps are the operations whose count is clamped to what they can reach,
@@ -228,6 +228,26 @@ func TestTabClampsReachTheEdge(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// xterm keeps every CSI parameter at most MAX_I_PARAM, 65,535
+// (charproc.c's CASE_ESC_DIGIT), so CASE_REP repeats at most that many
+// times: on a screen of 100,000 cells, "x" then REP 100,000 leaves 65,536
+// x's and scrolls nothing. A count too long for an int is the largest too,
+// not what its low bits make: 4,294,967,297 would be 1.
+func TestREPRepeatsAtMostTheLargestParameter(t *testing.T) {
+	for _, count := range []string{"100000", "4294967297"} {
+		t.Run(count, func(t *testing.T) {
+			e := newTestTerminal(t, 1000, 100)
+			_, _ = e.WriteString("x\x1b[" + count + "b")
+			if got, want := cellsHolding(e, "x"), 1+65535; got != want {
+				t.Errorf("x's on the screen: got = %d, want = %d", got, want)
+			}
+			if got := e.ScrollbackLen(); got != 0 {
+				t.Errorf("lines scrolled into history: got = %d, want none", got)
+			}
+		})
 	}
 }
 
