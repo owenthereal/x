@@ -20,10 +20,12 @@ func (e *Emulator) handleEsc(cmd ansi.Cmd) {
 	}
 }
 
-// fullReset performs a full terminal reset as in [ansi.RIS].
+// fullReset performs a full terminal reset as in [ansi.RIS]. As in xterm, it
+// clears the history too, which a soft reset keeps.
 func (e *Emulator) fullReset() {
 	e.scrs[0].Reset()
 	e.scrs[1].Reset()
+	e.scrs[0].clearHistory()
 	e.resetTabStops()
 
 	// XXX: Do we reset all modes here? Investigate.

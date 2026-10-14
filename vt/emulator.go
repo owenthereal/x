@@ -575,6 +575,19 @@ func (e *Emulator) SetScrollOffFunc(fn func(uv.Line)) {
 	e.scrs[0].SetScrollOffFunc(fn)
 }
 
+// SetScrollbackClearFunc sets fn to be called whenever the history of the main
+// screen is cleared by what the program writing to the terminal sends, so a
+// caller keeping history through [Emulator.SetScrollOffFunc] can clear its
+// own. That is ED 3 (ESC[3J), whichever screen shows, and RIS; as in xterm, a
+// soft reset (DECSTR) keeps the history. fn is called from Write, after the
+// scrollback buffer is emptied, whether or not there is a buffer or anything in
+// it. The host's own [Emulator.ClearScrollback] and
+// [Emulator.SetScrollbackSize] do not call it. See
+// [Screen.SetScrollbackClearFunc].
+func (e *Emulator) SetScrollbackClearFunc(fn func()) {
+	e.scrs[0].SetScrollbackClearFunc(fn)
+}
+
 // SetScrollbackSize sets the maximum number of lines in the scrollback buffer.
 // A size of zero or less keeps no lines.
 func (e *Emulator) SetScrollbackSize(maxLines int) {

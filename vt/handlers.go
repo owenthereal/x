@@ -556,13 +556,13 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		case 2: // erase screen
 			// Save screen content to scrollback before clearing
 			e.scr.ClearWithScrollback()
-		case 3: // erase display (including scrollback in some terminals)
-			// For ED 3, we clear the screen but also clear scrollback
-			// This matches xterm behavior where ESC[3J clears scrollback
-			e.scr.Clear()
-			if sb := e.scr.Scrollback(); sb != nil {
-				sb.Clear()
-			}
+		case 3: // erase saved lines (the history)
+			// Only the history: xterm's ED 3 sets savedlines to zero and
+			// erases no cell, so ED 2 then ED 3 leaves one transcript where
+			// the screen was. It is the main screen's history that goes,
+			// whichever screen shows, as xterm saves lines only from its
+			// normal buffer. The cursor stays.
+			e.scrs[0].clearHistory()
 		default:
 			return false
 		}
