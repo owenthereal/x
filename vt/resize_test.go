@@ -244,6 +244,38 @@ func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 	}
 }
 
+// A width shrink that puts the new right edge between a wide character's
+// halves blanks its first half too, on both screens: kept, it would end the
+// row with no room for its second, which a terminal drawing the row wraps or
+// drops. xterm 412's Reallocate (screen.c:446) copies each row cut to the
+// new width with no repair at the edge. Its CopyCells, though, blanks a
+// double-width character the end of the span it copies cuts
+// (screen.c:787-790), with Clear2Cell (ptyx.h:2052), which keeps the cell's
+// colours; the cut here is that end.
+func TestANarrowingResizeBlanksAWideCharacterItCuts(t *testing.T) {
+	e := NewEmulator(6, 2)
+	e.WriteString("\x1b[2;1H\x1b[41mabcd日\x1b[?1049h\x1b[2;1H\x1b[44mabcd日")
+	e.Resize(5, 2)
+	for _, tc := range []struct {
+		name string
+		scr  *Screen
+		bg   ansi.Color
+	}{
+		{"main screen", e.MainScreen(), ansi.BasicColor(1)},
+		{"alternate screen", e.AltScreen(), ansi.BasicColor(4)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := tc.scr.Line(1)
+			if got, want := lineCells(line), []string{"a", "b", "c", "d", " "}; !slices.Equal(got, want) {
+				t.Errorf("row 2 cells: got = %q, want = %q", got, want)
+			}
+			if c := line[4]; c.Style.Bg != tc.bg {
+				t.Errorf("cell (4, 1): got = %+v, want a blank in 日's colours", c)
+			}
+		})
+	}
+}
+
 // A resize leaves a pending wrap pending, whichever screen shows, and the one
 // ?1049h saved in the main screen's slot too: xterm's ScreenResize does not
 // touch do_wrap, nor a slot's wrap_flag.
