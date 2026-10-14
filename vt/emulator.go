@@ -263,13 +263,12 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 	return e.scr.cur.Style, !e.scr.cur.Steady
 }
 
-// Resize resizes the terminal, following xterm's ScreenResize. Each screen
-// keeps its cursor's row (see [Screen.Resize]): the screen showing keeps the
-// cursor's, and the main screen behind the alternate one the row the cursor
-// was on when they switched. The rows the alternate screen loses at the top
-// are discarded, not moved into history. The cursors are only kept on the
-// screen, a pending wrap stays pending, and the margins and origin mode are
-// reset.
+// Resize resizes the terminal, following xterm's ScreenResize. Both screens
+// keep the row of the cursor, the terminal's one (see [Screen.Resize]), the
+// screen that isn't showing too. Only the main screen, while it shows, moves
+// the rows it loses at the top into history; the others discard them. The
+// cursors are only kept on the screen, a pending wrap stays pending, and the
+// margins and origin mode are reset.
 //
 // A resize is metered like any operation: a stop inside it spends the
 // emulator, and the next Write returns [ErrStopped].
@@ -281,11 +280,14 @@ func (e *Emulator) Resize(width int, height int) {
 	// A resize ends the cluster the last Write printed: a mark in the next
 	// Write doesn't join it, and nothing that Write drops can carry it.
 	e.carry.valid, e.lastCluster.valid = false, false
-	if !e.scrs[0].resize(width, height, true) {
+	// xterm reallocates the hidden buffer around cur_row as well (Reallocate's
+	// move_up), and saves lines only from the buffer showing
+	// (saveEditBufLines reads visbuf). The alternate screen has no history.
+	y := e.scr.cur.Y
+	if !e.scrs[0].resize(width, height, y, !e.IsAltScreen()) {
 		return
 	}
-	// The alternate screen has no history.
-	if !e.scrs[1].resize(width, height, false) || !e.meter.spend(max(width, 1)) {
+	if !e.scrs[1].resize(width, height, y, false) || !e.meter.spend(max(width, 1)) {
 		return
 	}
 	e.tabstops = uv.DefaultTabStops(width)

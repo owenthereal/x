@@ -12,6 +12,7 @@ func (e *Emulator) resetModes() {
 		ansi.ModeMouseX10:            ansi.ModeReset, // ?9
 		ansi.ModeLineFeedNewLine:     ansi.ModeReset, // ?20
 		ansi.ModeTextCursorEnable:    ansi.ModeSet,   // ?25
+		modeAltBuffer:                ansi.ModeReset, // ?47
 		ansi.ModeNumericKeypad:       ansi.ModeReset, // ?66
 		ansi.ModeLeftRightMargin:     ansi.ModeReset, // ?69
 		ansi.ModeMouseNormal:         ansi.ModeReset, // ?1000

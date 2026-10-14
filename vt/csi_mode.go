@@ -40,8 +40,7 @@ const modeAltBuffer = ansi.DECMode(47)
 // SwitchBufs does: only the screen shown changes. The cursor, with its pen,
 // link and pending wrap, is the terminal's, not a screen's, so the screen
 // switched to takes it as it is, both ways; the scroll region is the
-// terminal's too. While the alternate screen shows, the main screen's own
-// cursor stays where the switch left it, as the row a resize keeps there. A
+// terminal's too. The cursor of the screen not showing is never read. A
 // switch to the screen already showing does nothing.
 func (e *Emulator) setAltScreenMode(on bool) {
 	if (on && e.scr == &e.scrs[1]) || (!on && e.scr == &e.scrs[0]) {

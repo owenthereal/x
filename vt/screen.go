@@ -87,14 +87,16 @@ func (s *Screen) Height() int {
 // until the cursor's row is the last. A width change truncates each row or
 // pads it with blank cells.
 func (s *Screen) Resize(width int, height int) {
-	s.resize(width, height, true)
+	s.resize(width, height, s.cur.Y, true)
 }
 
-// resize resizes the screen. Unless history is set, the rows a height shrink
-// takes from the top are discarded, not moved into history, as on the
-// alternate screen, which has none. It reports false if the meter stopped it,
-// which leaves the screen at its old size.
-func (s *Screen) resize(width, height int, history bool) bool {
+// resize resizes the screen, keeping row y, the row of the cursor that
+// shows, which for a screen kept hidden behind another is not its own.
+// Unless history is set, the rows a height shrink takes from the top are
+// discarded, not moved into history, as on the alternate screen, which has
+// none, and on a screen that isn't showing. It reports false if the meter
+// stopped it, which leaves the screen at its old size.
+func (s *Screen) resize(width, height, y int, history bool) bool {
 	// A Screen that NewScreen didn't make has no meter or scroll region yet.
 	if s.meter == nil {
 		s.meter = new(meter)
@@ -106,7 +108,7 @@ func (s *Screen) resize(width, height int, history bool) bool {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
 		if width != s.buf.Width() || height != s.buf.Height() {
-			if !s.reallocate(width, height, history) {
+			if !s.reallocate(width, height, y, history) {
 				return false
 			}
 		}
@@ -129,18 +131,18 @@ func (s *Screen) resize(width, height int, history bool) bool {
 // briefly need over four billion cells, and it shrinks by reslicing, which
 // keeps the old storage.
 //
-// The rows above the cursor that no longer fit go first, into history if
-// history is set, so the cursor's row becomes the last one, where the clamp
+// The rows above row y, the cursor's, that no longer fit go first, into
+// history if history is set, so row y becomes the last one, where the clamp
 // in resize puts the cursor. A screen with no rows or no columns, before or
 // after, has no cursor row to keep.
 //
 // Each row is built a span of columns at a time, metered. A stop keeps the
 // old rows, so the screen it leaves is whole, at its old size; it reports
 // false then.
-func (s *Screen) reallocate(width, height int, history bool) bool {
+func (s *Screen) reallocate(width, height, y int, history bool) bool {
 	top := 0
 	if width > 0 && height > 0 && s.buf.Width() > 0 {
-		top = max(s.cur.Y-(height-1), 0)
+		top = max(y-(height-1), 0)
 	}
 	old := s.buf.Lines
 	if history {

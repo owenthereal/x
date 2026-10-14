@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The tests below encode xterm 412 (XTERM_DATE 2026-10-11). charproc.c's
@@ -101,6 +102,45 @@ func TestAlt47CarriesThePen(t *testing.T) {
 				t.Errorf("X's pen: got = %+v link %+v, want the default pen and no link, as the alternate screen left them", c.Style, c.Link)
 			}
 		})
+	}
+}
+
+// DECTCEM's cursor_set and DECSCUSR's cursor_shape are TScreen's too, and
+// SwitchBufs leaves them, as CursorRestore does after ?1049l: a cursor the
+// alternate screen hid and reshaped is still hidden and reshaped on the main
+// screen, with ?25 still reset.
+func TestAltSwitchCarriesCursorVisibilityAndShape(t *testing.T) {
+	for _, sw := range []struct{ name, on, off string }{
+		{"?47", "\x1b[?47h", "\x1b[?47l"},
+		{"?1047", "\x1b[?1047h", "\x1b[?1047l"},
+		{"?1049", "\x1b[?1049h", "\x1b[?1049l"},
+	} {
+		t.Run(sw.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 3)
+			mustWrite(t, e, sw.on+"\x1b[?25l\x1b[4 q", true)
+			mustWrite(t, e, sw.off, false)
+			if !e.CursorHidden() {
+				t.Error("CursorHidden: got = false, want = true, as the alternate screen left it")
+			}
+			if got := e.Mode(ansi.ModeTextCursorEnable); got != ansi.ModeReset {
+				t.Errorf("DECTCEM: got = %v, want = %v", got, ansi.ModeReset)
+			}
+			if style, blink := e.CursorStyle(); style != CursorUnderline || blink {
+				t.Errorf("cursor style: got = %v blink %v, want a steady underline", style, blink)
+			}
+		})
+	}
+}
+
+// do_dec_rqm (misc.c) answers ?47 from whichBuf, as it does ?1047 and ?1049
+// (MdBool), so a fresh terminal reports it reset, not unrecognized.
+func TestDECRQMReportsTheAltBufferMode(t *testing.T) {
+	e := newTestTerminal(t, 10, 3)
+	var replies []string
+	e.SetReplyFunc(func(p []byte) { replies = append(replies, string(p)) })
+	mustWrite(t, e, "\x1b[?47$p\x1b[?47h\x1b[?47$p", true)
+	if want := []string{"\x1b[?47;2$y", "\x1b[?47;1$y"}; !slices.Equal(replies, want) {
+		t.Errorf("replies: got = %q, want = %q", replies, want)
 	}
 }
 
