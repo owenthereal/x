@@ -116,13 +116,13 @@ func (s *Screen) resize(width, height, y int, history bool) bool {
 		s.buf.Touched = nil
 	}
 	*s.scroll = s.buf.Bounds()
-	// The cursor and the DECSC slot stay inside the new size, whether or not
-	// this is the active screen: a cursor off the screen drops what is
-	// printed at it. The slot is only clamped, not moved with its row: xterm
-	// moves it only by the rows a growth pulls back from history, and a
-	// growth here pulls none back.
+	// The cursor stays inside the new size, whether or not this is the
+	// active screen: a cursor off the screen drops what is printed at it.
+	// The DECSC slot keeps its position, as xterm's ScreenResize leaves it,
+	// for RestoreCursor to clamp when DECRC moves there: a shrink and a
+	// growth back bring it back where it was. xterm moves it only by the
+	// rows a growth pulls back from history, and a growth here pulls none.
 	s.cur.Position = clampToScreen(s.cur.Position, width, height)
-	s.saved.Position = clampToScreen(s.saved.Position, width, height)
 	return true
 }
 

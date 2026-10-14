@@ -31,6 +31,12 @@ func (e *Emulator) ActiveScreen() *Screen {
 // DECSC saved alongside it in Saved. A slot no DECSC has filled reports what
 // DECRC restores from it, with Saved.Saved false: home, the default pen and
 // no link, ASCII in G0-G3, G0 in GL and G2 in GR, no origin mode and no wrap.
+//
+// The Position is the one saved, which a resize leaves as it is, so it can be
+// off the screen: DECRC clamps it as it moves there, to the screen, or under
+// the origin mode the slot holds to the bottom and right margins. Hidden,
+// Style and Steady are the cursor's when DECSC ran, and DECRC never restores
+// them.
 func (s *Screen) SavedCursor() Cursor {
 	c := s.saved
 	if !c.Saved.Saved {

@@ -207,19 +207,42 @@ func TestAltScreenHeightShrinkKeepsTheCursorLine(t *testing.T) {
 	}
 }
 
-// A height shrink only clamps the DECSC slot; it does not move it with the
-// rows that went into history. xterm moves a saved cursor only for the main
-// screen while the alternate one shows, and only by the rows a growth pulls
-// back from history (AdjustSavedCursor, cursor.c, called from ScreenResize);
-// a growth here pulls none back.
-func TestHeightShrinkClampsTheSavedCursor(t *testing.T) {
-	e := NewEmulator(10, 6)
-	e.WriteString("r0\r\nr1\r\nr2\r\nr3\r\nr4\x1b7\r\nr5")
-	e.Resize(10, 3)
-	e.WriteString("\x1b8")
-
-	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
-		t.Errorf("cursor after DECRC: got = %v, want = %v, the slot's row 4 clamped", got, want)
+// A resize leaves the DECSC slot where it was, as xterm's ScreenResize
+// (screen.c:2217) does: it moves a saved cursor only for the main screen
+// while the alternate one shows, and only by the rows a growth pulls back
+// from history (AdjustSavedCursor), which a growth here pulls none of. DECRC
+// clamps the position to the screen as it moves there (CursorRestoreFlags'
+// CursorSet, cursor.c:484-493). So a slot saved at column 7 of row 20 on
+// 10x24 comes back clamped after a shrink to 5x10, and where it was after a
+// shrink and a growth back to 10x24, through DECRC and through ?1049l.
+func TestAResizeKeepsTheSavedCursor(t *testing.T) {
+	for _, tc := range []struct{ name, save, restore string }{
+		{"DECSC and DECRC", "\x1b7", "\x1b8"},
+		{"?1049h and ?1049l", "\x1b[?1049h", "\x1b[?1049l"},
+	} {
+		for _, sizes := range []struct {
+			name  string
+			sizes [][2]int
+			want  uv.Position
+		}{
+			{"after a shrink", [][2]int{{5, 10}}, uv.Pos(4, 9)},
+			{"after a shrink and a growth", [][2]int{{5, 10}, {10, 24}}, uv.Pos(7, 20)},
+		} {
+			t.Run(tc.name+"/"+sizes.name, func(t *testing.T) {
+				e := NewEmulator(10, 24)
+				e.WriteString("\x1b[21;8H" + tc.save)
+				for _, size := range sizes.sizes {
+					e.Resize(size[0], size[1])
+				}
+				if got, want := e.MainScreen().SavedCursor().Position, uv.Pos(7, 20); got != want {
+					t.Errorf("the slot before the restore: got = %v, want = %v", got, want)
+				}
+				e.WriteString(tc.restore)
+				if got := e.CursorPosition(); got != sizes.want {
+					t.Errorf("cursor after %q: got = %v, want = %v", tc.restore, got, sizes.want)
+				}
+			})
+		}
 	}
 }
 

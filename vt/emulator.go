@@ -267,8 +267,9 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 // keep the row of the cursor, the terminal's one (see [Screen.Resize]), the
 // screen that isn't showing too. Only the main screen, while it shows, moves
 // the rows it loses at the top into history; the others discard them. The
-// cursors are only kept on the screen, a pending wrap stays pending, and the
-// margins and origin mode are reset.
+// cursors are only kept on the screen, the DECSC slots keep their positions
+// (DECRC clamps them), a pending wrap stays pending, and the margins and
+// origin mode are reset.
 //
 // A resize is metered like any operation: a stop inside it spends the
 // emulator, and the next Write returns [ErrStopped].
