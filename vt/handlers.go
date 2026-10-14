@@ -472,6 +472,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Insert Character [ansi.ICH]
 		n, _, _ := params.Param(0, 1)
 		e.scr.InsertCell(n)
+		e.clearWrapInMargins()
 		return true
 	})
 
@@ -563,8 +564,10 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 			e.scr.FillArea(e.scr.blankCell(), rect1)
 			e.scr.FillArea(e.scr.blankCell(), rect2)
 		case 1: // Erase screen above (including cursor)
-			rect := uv.Rect(0, 0, width, y+1)
-			e.scr.FillArea(e.scr.blankCell(), rect)
+			// The rows above the cursor, and its own row up to and
+			// including the cursor's cell, as xterm's ClearAbove does.
+			e.scr.FillArea(e.scr.blankCell(), uv.Rect(0, 0, width, y))
+			e.scr.FillArea(e.scr.blankCell(), uv.Rect(0, y, x+1, 1))
 		case 2: // erase screen
 			// Save screen content to scrollback before clearing
 			e.scr.ClearWithScrollback()
@@ -573,11 +576,15 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 			// erases no cell, so ED 2 then ED 3 leaves one transcript where
 			// the screen was. It is the main screen's history that goes,
 			// whichever screen shows, as xterm saves lines only from its
-			// normal buffer. The cursor stays.
+			// normal buffer. The cursor stays, and so does its wrap.
 			e.scrs[0].clearHistory()
+			return true
 		default:
 			return false
 		}
+		// An erase of cells leaves no wrap pending, as xterm's ClearRight,
+		// ClearInLine2 and ClearScreen reset it.
+		e.atPhantom = false
 		return true
 	})
 
@@ -601,6 +608,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		default:
 			return false
 		}
+		// Every kind leaves no wrap pending, as xterm's ClearRight and
+		// ClearInLine2 reset it.
+		e.atPhantom = false
 		return true
 	})
 
@@ -632,6 +642,7 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 		// Delete Character [ansi.DCH]
 		n, _, _ := params.Param(0, 1)
 		e.scr.DeleteCell(n)
+		e.clearWrapInMargins()
 		return true
 	})
 
