@@ -181,3 +181,51 @@ func TestCarriageReturnUnderOriginModeKeepsTheRow(t *testing.T) {
 		})
 	}
 }
+
+// charproc.c's dotext sets need_wrap when the text fills the rest of the line
+// (:7157-7158), whatever its width, and keeps it in do_wrap (:7173) whatever
+// WRAPAROUND is. The next print takes the flag (:7065-7066) and wraps only if
+// WRAPAROUND is set by then (:7067-7068): without it, the "y" overwrites the
+// last column, and fills it, so the wrap is pending again; with ?7h sent
+// between, the "y" goes to the next row.
+func TestAFullRowLeavesAWrapPendingUnderAutowrapOff(t *testing.T) {
+	for _, tc := range []struct {
+		name, row string
+		// The row once the "y" overwrites column 9, which blanks the rest
+		// of a wide character it lands on.
+		overwritten string
+	}{
+		{"narrow characters", strings.Repeat("x", 10), strings.Repeat("x", 9) + "y"},
+		{"a wide character ending on the last column", strings.Repeat("x", 8) + "日", strings.Repeat("x", 8) + " y"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 2)
+			_, _ = e.WriteString("\x1b[?7l" + tc.row)
+			if !e.PendingWrap() {
+				t.Error("no wrap pending after the row filled under ?7l")
+			}
+			_, _ = e.WriteString("y")
+			for y, want := range []string{tc.overwritten, ""} {
+				if got := rowText(e, y); got != want {
+					t.Errorf("row %d: got = %q, want = %q", y, got, want)
+				}
+			}
+			if !e.PendingWrap() {
+				t.Error("no wrap pending after the y filled the last column")
+			}
+		})
+
+		t.Run(tc.name+", then ?7h", func(t *testing.T) {
+			e := newTestTerminal(t, 10, 2)
+			_, _ = e.WriteString("\x1b[?7l" + tc.row + "\x1b[?7hy")
+			for y, want := range []string{tc.row, "y"} {
+				if got := rowText(e, y); got != want {
+					t.Errorf("row %d: got = %q, want = %q", y, got, want)
+				}
+			}
+			if got, want := e.CursorPosition(), uv.Pos(1, 1); got != want {
+				t.Errorf("cursor: got = %v, want = %v", got, want)
+			}
+		})
+	}
+}
