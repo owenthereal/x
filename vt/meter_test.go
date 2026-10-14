@@ -608,7 +608,7 @@ func TestMeteredShiftsMatchUltraviolet(t *testing.T) {
 			}
 			y = area.Min.Y + rnd.IntN(area.Dy())
 			n = 1 + rnd.IntN(area.Max.Y-y)
-			got.scroll = area
+			*got.scroll = area
 			if i%6 == 2 {
 				op = fmt.Sprintf("InsertLineArea(%d, %d, %v)", y, n, area)
 				want.buf.InsertLineArea(y, n, c, area)

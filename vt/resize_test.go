@@ -26,33 +26,91 @@ func lineTexts(lines []uv.Line) []string {
 }
 
 // aroundTheResize runs a resize on the main screen, and on the main screen
-// kept behind the alternate one by a ?1049 trip around it.
+// kept behind the alternate one by a ?1049 trip around it, and by a ?47 trip,
+// which carries the cursor and its wrap back.
 var aroundTheResize = []struct{ name, before, after string }{
 	{"main screen", "", ""},
 	{"behind ?1049", "\x1b[?1049h", "\x1b[?1049l"},
+	{"behind ?47", "\x1b[?47h", "\x1b[?47l"},
 }
 
 // A height shrink with the cursor on the last row moves rows from the top
 // into history until the cursor's row is the last, so the cursor keeps its
 // row's content, as xterm's ScreenResize does with its default SouthWest
-// gravity (screen.c, saveEditBufLines before Reallocate). The main screen
-// does so behind the alternate one too, by its own cursor.
+// gravity (screen.c, saveEditBufLines before Reallocate).
 func TestHeightShrinkPushesTopRowsIntoHistory(t *testing.T) {
-	for _, tc := range aroundTheResize {
+	e := NewEmulator(10, 6)
+	e.WriteString(sixRows)
+	e.Resize(10, 3)
+
+	if got, want := lineTexts(e.Scrollback().Lines()), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
+		t.Errorf("history: got = %q, want = %q", got, want)
+	}
+	if got, want := screenRows(e, 10), []string{"r3", "r4", "r5"}; !slices.Equal(got, want) {
+		t.Errorf("screen: got = %q, want = %q", got, want)
+	}
+	if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
+		t.Errorf("cursor: got = %v, want = %v, after r5", got, want)
+	}
+}
+
+// A height shrink cuts the screen that isn't showing around the cursor too,
+// the terminal's one: xterm's ScreenResize reallocates the hidden buffer
+// first, and Reallocate's move_up counts from cur_row whichever buffer it
+// cuts. The rows it takes from the top of a hidden buffer are dropped: only
+// the buffer showing saves lines, as saveEditBufLines copies from
+// getLineData, which reads visbuf (linedata.c). So the main screen behind the
+// alternate one sends nothing to history, and the alternate screen behind the
+// main one keeps the rows around the main screen's cursor.
+func TestAHeightShrinkCutsAHiddenScreenAroundTheCursor(t *testing.T) {
+	for _, tc := range []struct {
+		name, setup, after string
+		alt                bool
+		screen, history    []string
+		cursor             uv.Position
+	}{
+		// The cursor home on the alternate screen: the main screen keeps its
+		// first rows, and ?1049l's DECRC clamps the slot after r5.
+		{
+			"main behind ?1049, the cursor home", sixRows + "\x1b[?1049h\x1b[H", "\x1b[?1049l",
+			false, []string{"r0", "r1", "r2"}, nil, uv.Pos(2, 2),
+		},
+		// The cursor on the last row: the main screen's first rows go, into
+		// no history.
+		{
+			"main behind ?47, the cursor on the last row", sixRows + "\x1b[?47h", "\x1b[?47l",
+			false, []string{"r3", "r4", "r5"}, nil, uv.Pos(2, 2),
+		},
+		// The alternate screen's own cursor was home when the main screen
+		// took it; the main screen showing moves its own blank rows into
+		// history.
+		{
+			"alternate behind the main screen", "\x1b[?47h" + sixRows + "\x1b[1;1H\x1b[?47l\x1b[6;1H", "\x1b[?47h",
+			true, []string{"r3", "r4", "r5"}, []string{"", "", ""}, uv.Pos(0, 2),
+		},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(10, 6)
-			e.WriteString(sixRows + tc.before)
+			var off []string
+			e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
+			e.WriteString(tc.setup)
 			e.Resize(10, 3)
 			e.WriteString(tc.after)
 
-			if got, want := lineTexts(e.Scrollback().Lines()), []string{"r0", "r1", "r2"}; !slices.Equal(got, want) {
-				t.Errorf("history: got = %q, want = %q", got, want)
+			if e.IsAltScreen() != tc.alt {
+				t.Fatalf("IsAltScreen: got = %v, want = %v", e.IsAltScreen(), tc.alt)
 			}
-			if got, want := screenRows(e, 10), []string{"r3", "r4", "r5"}; !slices.Equal(got, want) {
-				t.Errorf("screen: got = %q, want = %q", got, want)
+			if got := screenRows(e, 10); !slices.Equal(got, tc.screen) {
+				t.Errorf("screen: got = %q, want = %q", got, tc.screen)
 			}
-			if got, want := e.CursorPosition(), uv.Pos(2, 2); got != want {
-				t.Errorf("cursor: got = %v, want = %v, after r5", got, want)
+			if got := lineTexts(e.Scrollback().Lines()); !slices.Equal(got, tc.history) {
+				t.Errorf("history: got = %q, want = %q", got, tc.history)
+			}
+			if !slices.Equal(off, tc.history) {
+				t.Errorf("scroll-off function: got = %q, want = %q", off, tc.history)
+			}
+			if got := e.CursorPosition(); got != tc.cursor {
+				t.Errorf("cursor: got = %v, want = %v", got, tc.cursor)
 			}
 		})
 	}
@@ -77,20 +135,17 @@ func TestHeightShrinkDropsBlankRowsBelowTheCursorFirst(t *testing.T) {
 }
 
 // The rows a height shrink moves into history reach the scroll-off function,
-// as rows scrolled off the top do, behind the alternate screen too.
+// as rows scrolled off the top do. Behind the alternate screen none do (see
+// TestAHeightShrinkCutsAHiddenScreenAroundTheCursor).
 func TestHeightShrinkFeedsTheScrollOffFunction(t *testing.T) {
-	for _, tc := range aroundTheResize {
-		t.Run(tc.name, func(t *testing.T) {
-			e := NewEmulator(10, 6)
-			var off []string
-			e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
-			e.WriteString(sixRows + tc.before)
-			e.Resize(10, 3)
+	e := NewEmulator(10, 6)
+	var off []string
+	e.SetScrollOffFunc(func(l uv.Line) { off = append(off, l.String()) })
+	e.WriteString(sixRows)
+	e.Resize(10, 3)
 
-			if want := []string{"r0", "r1", "r2"}; !slices.Equal(off, want) {
-				t.Errorf("scroll-off function: got = %q, want = %q", off, want)
-			}
-		})
+	if want := []string{"r0", "r1", "r2"}; !slices.Equal(off, want) {
+		t.Errorf("scroll-off function: got = %q, want = %q", off, want)
 	}
 }
 
@@ -189,18 +244,15 @@ func TestWidthChangeTruncatesAndPadsWithBlanks(t *testing.T) {
 	}
 }
 
-// A resize leaves a pending wrap pending, on the active screen and on the
-// main screen kept behind the alternate one: xterm's ScreenResize does not
-// touch do_wrap.
+// A resize leaves a pending wrap pending, whichever screen shows, and the one
+// ?1049h saved in the main screen's slot too: xterm's ScreenResize does not
+// touch do_wrap, nor a slot's wrap_flag.
 func TestResizeKeepsThePendingWrap(t *testing.T) {
 	for _, tc := range aroundTheResize {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEmulator(10, 2)
 			e.WriteString(strings.Repeat("x", 10) + tc.before)
 			e.Resize(10, 4)
-			if !e.MainPendingWrap() {
-				t.Error("MainPendingWrap after the resize: got = false, want = true")
-			}
 			e.WriteString(tc.after)
 			if !e.PendingWrap() {
 				t.Errorf("PendingWrap: got = false, want = true (cursor %v)", e.CursorPosition())

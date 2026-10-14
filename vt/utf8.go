@@ -184,7 +184,7 @@ func (e *Emulator) undoCluster(c clusterMark) bool {
 		e.scr.putCells(c.x+1-len(c.under), c.y, c.under)
 	case e.insertMode:
 		// Undo the insert that made room for it.
-		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), e.scr.scroll) {
+		if !e.scr.deleteCellArea(c.x, c.y, c.width, e.scr.blankCell(), *e.scr.scroll) {
 			return false
 		}
 	default:
@@ -304,7 +304,7 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 
 	if e.insertMode {
 		// IRM: shift the rest of the line right to make room.
-		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), e.scr.scroll) {
+		if !e.scr.insertCellArea(x, y, cell.Width, e.scr.blankCell(), *e.scr.scroll) {
 			return
 		}
 	}

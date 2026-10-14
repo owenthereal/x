@@ -13,8 +13,9 @@ type Screen struct {
 	buf *uv.RenderBuffer
 	// The cur of the screen.
 	cur, saved Cursor
-	// scroll is the scroll region.
-	scroll uv.Rectangle
+	// scroll is the scroll region. An Emulator's two screens share its one
+	// region, as a terminal has one set of margins whichever buffer shows.
+	scroll *uv.Rectangle
 	// scrollback is the scrollback buffer for lines scrolled off the top.
 	scrollback *Scrollback
 	// scrollOff, when set, receives each line that leaves the screen into
@@ -31,10 +32,11 @@ type Screen struct {
 func NewScreen(w, h int) *Screen {
 	s := Screen{
 		buf:        uv.NewRenderBuffer(w, h),
+		scroll:     new(uv.Rectangle),
 		scrollback: NewScrollback(DefaultScrollbackSize),
 		meter:      new(meter),
 	}
-	s.scroll = s.buf.Bounds()
+	*s.scroll = s.buf.Bounds()
 	return &s
 }
 
@@ -45,7 +47,7 @@ func (s *Screen) Reset() {
 	s.clearCells()
 	s.cur = Cursor{}
 	s.saved = Cursor{}
-	s.scroll = s.buf.Bounds()
+	*s.scroll = s.buf.Bounds()
 	s.buf.Touched = nil
 }
 
@@ -85,29 +87,34 @@ func (s *Screen) Height() int {
 // until the cursor's row is the last. A width change truncates each row or
 // pads it with blank cells.
 func (s *Screen) Resize(width int, height int) {
-	s.resize(width, height, true)
+	s.resize(width, height, s.cur.Y, true)
 }
 
-// resize resizes the screen. Unless history is set, the rows a height shrink
-// takes from the top are discarded, not moved into history, as on the
-// alternate screen, which has none. It reports false if the meter stopped it,
-// which leaves the screen at its old size.
-func (s *Screen) resize(width, height int, history bool) bool {
+// resize resizes the screen, keeping row y, the row of the cursor that
+// shows, which for a screen kept hidden behind another is not its own.
+// Unless history is set, the rows a height shrink takes from the top are
+// discarded, not moved into history, as on the alternate screen, which has
+// none, and on a screen that isn't showing. It reports false if the meter
+// stopped it, which leaves the screen at its old size.
+func (s *Screen) resize(width, height, y int, history bool) bool {
+	// A Screen that NewScreen didn't make has no meter or scroll region yet.
 	if s.meter == nil {
-		// A Screen that NewScreen didn't make has no meter yet.
 		s.meter = new(meter)
+	}
+	if s.scroll == nil {
+		s.scroll = new(uv.Rectangle)
 	}
 	if s.buf == nil {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
 		if width != s.buf.Width() || height != s.buf.Height() {
-			if !s.reallocate(width, height, history) {
+			if !s.reallocate(width, height, y, history) {
 				return false
 			}
 		}
 		s.buf.Touched = nil
 	}
-	s.scroll = s.buf.Bounds()
+	*s.scroll = s.buf.Bounds()
 	// The cursor and the DECSC slot stay inside the new size, whether or not
 	// this is the active screen: a cursor off the screen drops what is
 	// printed at it. The slot is only clamped, not moved with its row: xterm
@@ -124,18 +131,18 @@ func (s *Screen) resize(width, height int, history bool) bool {
 // briefly need over four billion cells, and it shrinks by reslicing, which
 // keeps the old storage.
 //
-// The rows above the cursor that no longer fit go first, into history if
-// history is set, so the cursor's row becomes the last one, where the clamp
+// The rows above row y, the cursor's, that no longer fit go first, into
+// history if history is set, so row y becomes the last one, where the clamp
 // in resize puts the cursor. A screen with no rows or no columns, before or
 // after, has no cursor row to keep.
 //
 // Each row is built a span of columns at a time, metered. A stop keeps the
 // old rows, so the screen it leaves is whole, at its old size; it reports
 // false then.
-func (s *Screen) reallocate(width, height int, history bool) bool {
+func (s *Screen) reallocate(width, height, y int, history bool) bool {
 	top := 0
 	if width > 0 && height > 0 && s.buf.Width() > 0 {
-		top = max(s.cur.Y-(height-1), 0)
+		top = max(y-(height-1), 0)
 	}
 	old := s.buf.Lines
 	if history {
@@ -389,7 +396,7 @@ func (s *Screen) setCursor(x, y int, margins bool) {
 // This follows how [ansi.CUU], [ansi.CUD], [ansi.CUF], [ansi.CUB], [ansi.CNL],
 // [ansi.CPL].
 func (s *Screen) moveCursor(dx, dy int) {
-	scroll := s.scroll
+	scroll := *s.scroll
 	old := s.cur.Position
 	if old.X < scroll.Min.X {
 		scroll.Min.X = 0
@@ -427,9 +434,10 @@ func (s *Screen) CursorPosition() (x, y int) {
 	return s.cur.X, s.cur.Y
 }
 
-// ScrollRegion returns the scroll region.
+// ScrollRegion returns the scroll region. An [Emulator]'s screens report the
+// same one, the terminal's, whichever shows.
 func (s *Screen) ScrollRegion() uv.Rectangle {
-	return s.scroll
+	return *s.scroll
 }
 
 // SaveCursor saves the cursor: its position, pen and link. An [Emulator]'s
@@ -512,7 +520,7 @@ func (s *Screen) InsertCell(n int) {
 	// distance to it inserts no more. Outside the margins nothing is inserted,
 	// whatever the count.
 	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.insertCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.insertCellArea(x, y, n, s.blankCell(), *s.scroll)
 }
 
 // DeleteCell deletes n cells at the cursor position moving cells to the left.
@@ -527,7 +535,7 @@ func (s *Screen) DeleteCell(n int) {
 	// to it deletes no more. Outside the margins nothing is deleted, whatever
 	// the count.
 	n = min(n, max(s.scroll.Max.X-x, 1))
-	s.deleteCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.deleteCellArea(x, y, n, s.blankCell(), *s.scroll)
 }
 
 // insertCellArea inserts n cells set to c at x on row y, within area, as
@@ -721,7 +729,7 @@ func (s *Screen) DeleteLine(n int) bool {
 		return false
 	}
 
-	scroll := s.scroll
+	scroll := *s.scroll
 	x, y := s.cur.X, s.cur.Y
 
 	// Only operate if cursor Y is within scroll region
@@ -797,7 +805,7 @@ func (s *Screen) deleteRows(y, n int) {
 // rotate. It copies a metered span of a row at a time, until the meter stops
 // it. The caller keeps y inside the region and n within it.
 func (s *Screen) shiftRowsDown(y, n int, c *uv.Cell) {
-	area := s.scroll
+	area := *s.scroll
 	for i := area.Max.Y - 1; i >= y+n; i-- {
 		if !s.copyRow(i, i-n) {
 			return
@@ -816,7 +824,7 @@ func (s *Screen) shiftRowsDown(y, n int, c *uv.Cell) {
 // [uv.RenderBuffer.DeleteLineArea] does. Like shiftRowsDown it is metered,
 // for a region narrower than the screen.
 func (s *Screen) shiftRowsUp(y, n int, c *uv.Cell) {
-	area := s.scroll
+	area := *s.scroll
 	for i := y; i < area.Max.Y-n; i++ {
 		if !s.copyRow(i, i+n) {
 			return

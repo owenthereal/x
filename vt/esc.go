@@ -23,8 +23,15 @@ func (e *Emulator) handleEsc(cmd ansi.Cmd) {
 // fullReset performs a full terminal reset as in [ansi.RIS]. As in xterm, it
 // clears the history too, which a soft reset keeps.
 func (e *Emulator) fullReset() {
+	// xterm's RIS leaves the alternate screen with FromAlternate(xw, True),
+	// which clears it first only if it shows, and resets the main screen's
+	// cursor and DECSC slot alone: an alternate screen that isn't showing
+	// keeps its cells, and either way it keeps its slot.
+	if e.IsAltScreen() {
+		e.clearScreen()
+		e.setAltScreenMode(false)
+	}
 	e.scrs[0].Reset()
-	e.scrs[1].Reset()
 	e.scrs[0].clearHistory()
 	e.resetTabStops()
 
@@ -32,7 +39,7 @@ func (e *Emulator) fullReset() {
 	e.resetModes()
 
 	e.resetCharsets()
-	e.atPhantom, e.mainPhantom = false, false
+	e.atPhantom = false
 	e.grapheme = e.grapheme[:0]
 	e.carry.valid = false
 	e.lastChar = 0

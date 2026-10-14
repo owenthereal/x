@@ -26,6 +26,11 @@ type Emulator struct {
 	scrs [2]Screen
 	scr  *Screen
 
+	// The scroll region, which is the terminal's, not a screen's: both
+	// screens use it, and no switch between them changes it, as xterm keeps
+	// its margins in TScreen, beside the buffer it shows.
+	scroll uv.Rectangle
+
 	// Character sets, and the final byte of the SCS sequence that designated
 	// each (0 for the default, ASCII).
 	charsets     [4]CharSet
@@ -92,11 +97,8 @@ type Emulator struct {
 
 	// atPhantom indicates if the cursor is out of bounds.
 	// When true, and a character is written, the cursor is moved to the next line.
+	// Like the cursor, it is the terminal's: switching screens leaves it.
 	atPhantom bool
-
-	// mainPhantom is the main screen's atPhantom while the alternate
-	// screen is active.
-	mainPhantom bool
 
 	// meter counts the work of every operation, for the stop function. Both
 	// screens count on it.
@@ -115,6 +117,9 @@ func NewEmulator(w, h int) *Emulator {
 	t.scrs[1].cb = &t.cb
 	t.scrs[0].meter = &t.meter
 	t.scrs[1].meter = &t.meter
+	t.scrs[0].scroll = &t.scroll
+	t.scrs[1].scroll = &t.scroll
+	t.scroll = t.scrs[0].Bounds()
 	t.parser = ansi.NewParser()
 	t.parser.SetParamsSize(parser.MaxParamsSize)
 	t.parser.SetDataSize(1024 * 1024 * 4) // 4MB data buffer
@@ -258,11 +263,12 @@ func (e *Emulator) CursorStyle() (style CursorStyle, blink bool) {
 	return e.scr.cur.Style, !e.scr.cur.Steady
 }
 
-// Resize resizes the terminal, following xterm's ScreenResize. Each screen
-// keeps its cursor's row (see [Screen.Resize]); the rows the alternate screen
-// loses at the top are discarded, not moved into history. The cursors are
-// only kept on the screen, a wrap pending on either screen stays pending, and
-// the margins and origin mode are reset.
+// Resize resizes the terminal, following xterm's ScreenResize. Both screens
+// keep the row of the cursor, the terminal's one (see [Screen.Resize]), the
+// screen that isn't showing too. Only the main screen, while it shows, moves
+// the rows it loses at the top into history; the others discard them. The
+// cursors are only kept on the screen, a pending wrap stays pending, and the
+// margins and origin mode are reset.
 //
 // A resize is metered like any operation: a stop inside it spends the
 // emulator, and the next Write returns [ErrStopped].
@@ -274,11 +280,14 @@ func (e *Emulator) Resize(width int, height int) {
 	// A resize ends the cluster the last Write printed: a mark in the next
 	// Write doesn't join it, and nothing that Write drops can carry it.
 	e.carry.valid, e.lastCluster.valid = false, false
-	if !e.scrs[0].resize(width, height, true) {
+	// xterm reallocates the hidden buffer around cur_row as well (Reallocate's
+	// move_up), and saves lines only from the buffer showing
+	// (saveEditBufLines reads visbuf). The alternate screen has no history.
+	y := e.scr.cur.Y
+	if !e.scrs[0].resize(width, height, y, !e.IsAltScreen()) {
 		return
 	}
-	// The alternate screen has no history.
-	if !e.scrs[1].resize(width, height, false) || !e.meter.spend(max(width, 1)) {
+	if !e.scrs[1].resize(width, height, y, false) || !e.meter.spend(max(width, 1)) {
 		return
 	}
 	e.tabstops = uv.DefaultTabStops(width)
