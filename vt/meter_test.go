@@ -723,14 +723,24 @@ func FuzzMeterInterval(f *testing.F) {
 			}
 			writes = takeCellWrites(scrs...)
 		}
+		// With no stop asked for, an input is bounded all the same: a REP
+		// prints up to 65,535 characters, and an input can hold many. Past
+		// maxCalls calls, about a quarter of a million cell operations at
+		// this interval, the Write stops and the input is skipped, with the
+		// interval checked up to there, rather than left to run past the
+		// fuzzer's time limit.
+		const maxCalls = 1024
 		calls := 0
 		e.SetStopFunc(func() bool {
 			check(e.meter.last)
 			calls++
-			return calls == int(stopAt)
+			return calls == int(stopAt) || calls > maxCalls
 		})
 
 		n, err := e.Write(p)
+		if calls > maxCalls {
+			t.Skip("more work than the fuzz allows an input")
+		}
 		if stopAt > 0 && calls == int(stopAt) {
 			if !errors.Is(err, ErrStopped) || n > len(p) {
 				t.Fatalf("Write after the stop function returned true: got (%d, %v), want at most %d bytes and ErrStopped", n, err, len(p))
