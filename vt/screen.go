@@ -84,8 +84,9 @@ func (s *Screen) Height() int {
 // Resize resizes the screen. A height shrink keeps the cursor's row, as xterm
 // and tmux do: it drops the rows below the cursor first, then moves rows from
 // the top into history, through the scrollback and the scroll-off function,
-// until the cursor's row is the last. A width change truncates each row or
-// pads it with blank cells.
+// until the cursor's row is the last. A width change truncates each row,
+// blanking a wide character the new right edge cuts, or pads it with blank
+// cells.
 func (s *Screen) Resize(width int, height int) {
 	s.resize(width, height, s.cur.Y, true)
 }
@@ -171,9 +172,36 @@ func (s *Screen) reallocate(width, height, y int, history bool) bool {
 		}) {
 			return false
 		}
+		// A wide character the new right edge cuts is blanked, as xterm's
+		// CopyCells blanks one the end of its copy cuts: its first half,
+		// kept, would end the row with no room for its second.
+		if cuts(src, width) && !s.blankCutEnd(line) {
+			return false
+		}
 		lines[y] = line
 	}
 	s.buf.Lines = lines
+	return true
+}
+
+// blankCutEnd blanks the cells at the end of line that belong to a wide
+// character the end cuts: its first cell, and the placeholders after it.
+// Each keeps its colours, as xterm's Clear2Cell keeps them. It charges the
+// cells it blanks, and reports false if the meter stopped it.
+func (s *Screen) blankCutEnd(line uv.Line) bool {
+	lo := len(line)
+	for lo > 0 && line[lo-1].Width == 0 {
+		lo--
+	}
+	if lo > 0 && line[lo-1].Width > 1 {
+		lo--
+	}
+	if !s.meter.spend(len(line) - lo) {
+		return false
+	}
+	for x := lo; x < len(line); x++ {
+		line[x].Empty()
+	}
 	return true
 }
 

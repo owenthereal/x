@@ -13,10 +13,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// rowCells returns each cell of row y as its content, followed by its width
-// when that isn't 1: "日/2", then its placeholder, "/0".
+// rowCells returns each cell of row y of e's screen as lineCells does.
 func rowCells(e *Emulator, y int) []string {
-	line := e.scr.buf.Line(y)
+	return lineCells(e.scr.buf.Line(y))
+}
+
+// lineCells returns each cell of line as its content, followed by its width
+// when that isn't 1: "日/2", then its placeholder, "/0".
+func lineCells(line uv.Line) []string {
 	cells := make([]string, len(line))
 	for x, c := range line {
 		cells[x] = c.Content

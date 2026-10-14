@@ -40,6 +40,7 @@ package vt
 //	(*uv.Buffer).Line                  anywhere: a constant
 //	(*uv.Buffer).Width                 anywhere: a constant
 //	(*uv.Cell).Clone                   anywhere: a constant
+//	(*uv.Cell).Empty                   anywhere: a constant
 //	(*uv.Cell).Equal                   anywhere: a constant
 //	(*uv.Cell).IsZero                  anywhere: a constant
 //	uv.Pos                             anywhere: a constant
