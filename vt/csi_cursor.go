@@ -79,7 +79,7 @@ func (e *Emulator) prevTab(n int) {
 	// phantom state. xterm's TabToPrevStop sets only the column, so a wrap
 	// pending before the tab stays, off the last column, and the next
 	// character still wraps.
-	e.scr.setCursorX(x, false)
+	e.scr.setCursorX(x)
 }
 
 // moveCursor moves the cursor by the given x and y deltas. If the cursor
@@ -129,9 +129,9 @@ func (e *Emulator) carriageReturn() {
 	margins := ok && mode.IsSet()
 	x, _ := e.scr.CursorPosition()
 	if left := e.scr.ScrollRegion().Min.X; margins || x >= left {
-		e.scr.setCursorX(left, false)
+		e.scr.setCursorX(left)
 	} else {
-		e.scr.setCursorX(0, false)
+		e.scr.setCursorX(0)
 	}
 	e.atPhantom = false
 }

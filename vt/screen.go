@@ -394,10 +394,9 @@ func (s *Screen) setVerticalMargins(top, bottom int) {
 	s.scroll.Max.Y = bottom
 }
 
-// setCursorX sets the cursor X position. If margins is true, the cursor is
-// only set if it is within the scroll margins.
-func (s *Screen) setCursorX(x int, margins bool) {
-	s.setCursor(x, s.cur.Y, margins)
+// setCursorX sets the cursor X position, on the cursor's row.
+func (s *Screen) setCursorX(x int) {
+	s.setCursor(x, s.cur.Y, false)
 }
 
 // setCursor sets the cursor position. If margins is true, the cursor is only
