@@ -6,10 +6,10 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
-// vt builds against the in-repo ansi module (a replace in go.mod), so its tests
-// see the parser fixes that module carries. These two tests exist to fail when
-// that wiring is lost: each feeds the emulator bytes whose handling the
-// published ansi v0.11.7 gets wrong and the in-repo parser gets right.
+// vt parses with this fork's ansi module, github.com/owenthereal/x/ansi, so
+// its tests see the parser fixes the fork carries. These two tests exist to
+// fail when that wiring is lost: each feeds the emulator bytes whose handling
+// is one of those fixes.
 
 // The three bytes of U+2733 are E2 9C B3, and 0x9C is the C1 string terminator.
 // The parser used to treat that continuation byte as ST and end the title
