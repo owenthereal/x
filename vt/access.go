@@ -4,8 +4,8 @@ import (
 	"maps"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // The accessors below expose terminal state that a caller needs to reproduce

@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // lowerMeterInterval sets meterInterval to n until the test ends.
@@ -301,7 +301,7 @@ func TestNoUnmeteredUltravioletCellCall(t *testing.T) {
 	}
 	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
 	info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
-	if _, err := conf.Check("github.com/charmbracelet/x/vt", fset, files, info); err != nil {
+	if _, err := conf.Check("github.com/owenthereal/x/vt", fset, files, info); err != nil {
 		t.Fatal(err)
 	}
 

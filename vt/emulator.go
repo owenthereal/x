@@ -6,8 +6,8 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/screen"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // Logger represents a logger interface.
@@ -105,6 +105,10 @@ type Emulator struct {
 	// When true, and a character is written, the cursor is moved to the next line.
 	// Like the cursor, it is the terminal's: switching screens leaves it.
 	atPhantom bool
+
+	// sgr holds the buffer an SGR's parameters are converted into for
+	// ultraviolet.
+	sgr sgrParams
 
 	// meter counts the work of every operation, for the stop function. Both
 	// screens count on it.

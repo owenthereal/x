@@ -1,6 +1,6 @@
 package vt
 
-import "github.com/charmbracelet/x/ansi"
+import "github.com/owenthereal/x/ansi"
 
 // resetModes resets all modes to their default values.
 func (e *Emulator) resetModes() {

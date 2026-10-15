@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 func (e *Emulator) handleCsi(cmd ansi.Cmd, params ansi.Params) {

@@ -3,7 +3,7 @@ package vt
 import (
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 func TestAccessors(t *testing.T) {

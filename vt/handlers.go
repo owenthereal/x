@@ -2,7 +2,7 @@ package vt
 
 import (
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // DcsHandler is a function that handles a DCS escape sequence.

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // rowCells returns each cell of row y of e's screen as lineCells does.
@@ -152,7 +152,11 @@ func TestOverwritingAWideHeadBlanksItsTail(t *testing.T) {
 		e := NewEmulator(4, 1)
 		e.WriteString("\x1b[41m\x1b[1;2H日\x1b[44m\x1b[1;3HX")
 		checkCells(t, e, 0, " ", " ", "X", " ")
-		if c := e.CellAt(1, 0); c == nil || c.Style.Bg != ansi.BasicColor(4) {
+		// Equal compares colours by value: the pen's come from ultraviolet,
+		// whose BasicColor is upstream ansi's, a different type from this
+		// module's that a != would tell apart.
+		blue := uv.Style{Bg: ansi.BasicColor(4)}
+		if c := e.CellAt(1, 0); c == nil || !c.Style.Equal(&blue) {
 			t.Errorf("cell (1, 0): got = %+v, want a blank on blue", c)
 		}
 	})

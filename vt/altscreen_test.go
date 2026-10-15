@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // The tests below encode xterm 412 (XTERM_DATE 2026-10-11). charproc.c's

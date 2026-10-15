@@ -1,4 +1,4 @@
-module github.com/charmbracelet/x/vt
+module github.com/owenthereal/x/vt
 
 go 1.24.2
 
@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/exp/ordered v0.1.0
+	github.com/owenthereal/x/ansi v0.0.0-20261015013042-3e706d88bf76
 )
 
 require (
@@ -24,6 +25,3 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
-
-// Build against the in-repo ansi so vt's tests see the fork's parser fixes.
-replace github.com/charmbracelet/x/ansi => ../ansi

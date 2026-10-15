@@ -4,7 +4,7 @@ import (
 	"io"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // MouseButton represents the button that was pressed during a mouse message.
@@ -98,7 +98,9 @@ func (e *Emulator) SendMouse(m Mouse) {
 	mouse := m.Mouse()
 	_, isMotion := m.(MouseMotion)
 	_, isRelease := m.(MouseRelease)
-	b := ansi.EncodeMouseButton(mouse.Button, isMotion,
+	// The button is ultraviolet's, which is upstream ansi's MouseButton: the
+	// same byte as this module's, but another type.
+	b := ansi.EncodeMouseButton(ansi.MouseButton(mouse.Button), isMotion,
 		mouse.Mod.Contains(ModShift),
 		mouse.Mod.Contains(ModAlt),
 		mouse.Mod.Contains(ModCtrl))

@@ -1,6 +1,6 @@
 package vt
 
-import "github.com/charmbracelet/x/ansi"
+import "github.com/owenthereal/x/ansi"
 
 // handleDcs handles a DCS escape sequence.
 func (e *Emulator) handleDcs(cmd ansi.Cmd, params ansi.Params, data []byte) {

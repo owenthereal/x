@@ -1,7 +1,7 @@
 package vt
 
 import (
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // nextTab moves the cursor to the next tab stop n times. This respects the

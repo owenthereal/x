@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 // sixRows fills a 6-row screen with "r0" to "r5", leaving the cursor after
@@ -344,8 +344,11 @@ func TestANarrowingResizeBlanksAWideCharacterItCuts(t *testing.T) {
 			if got, want := lineCells(line), []string{"a", "b", "c", "d", " "}; !slices.Equal(got, want) {
 				t.Errorf("row 2 cells: got = %q, want = %q", got, want)
 			}
-			if c := line[4]; c.Style.Bg != tc.bg {
-				t.Errorf("cell (4, 1): got = %+v, want a blank in 日's colours", c)
+			// Equal compares colours by value: the pen's come from
+			// ultraviolet, whose BasicColor is upstream ansi's, a different
+			// type from this module's that a != would tell apart.
+			if want := (uv.Style{Bg: tc.bg}); !line[4].Style.Equal(&want) {
+				t.Errorf("cell (4, 1): got = %+v, want a blank in 日's colours", line[4])
 			}
 		})
 	}
