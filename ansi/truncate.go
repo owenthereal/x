@@ -3,9 +3,9 @@ package ansi
 import (
 	"strings"
 
-	"github.com/charmbracelet/x/ansi/parser"
 	"github.com/clipperhouse/displaywidth"
 	"github.com/clipperhouse/uax29/v2/graphemes"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // Cut the string, without adding any prefix or tail strings. This function is

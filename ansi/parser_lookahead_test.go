@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // copyParser returns a copy of p that shares no memory with it and calls h,

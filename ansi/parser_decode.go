@@ -3,8 +3,8 @@ package ansi
 import (
 	"unicode/utf8"
 
-	"github.com/charmbracelet/x/ansi/parser"
 	"github.com/clipperhouse/uax29/v2/graphemes"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // State represents the state of the ANSI escape sequence parser used by

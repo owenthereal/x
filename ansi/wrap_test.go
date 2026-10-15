@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 var cases = []struct {

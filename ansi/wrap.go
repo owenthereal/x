@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // nbsp is a non-breaking space.

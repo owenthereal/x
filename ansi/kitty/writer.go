@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 var (

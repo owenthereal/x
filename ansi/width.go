@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 // Strip removes ANSI escape codes from a string.

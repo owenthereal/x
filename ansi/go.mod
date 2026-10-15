@@ -1,4 +1,4 @@
-module github.com/charmbracelet/x/ansi
+module github.com/owenthereal/x/ansi
 
 go 1.24.2
 

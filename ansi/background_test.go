@@ -3,8 +3,8 @@ package ansi_test
 import (
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/lucasb-eyer/go-colorful"
+	"github.com/owenthereal/x/ansi"
 )
 
 func TestSetForegroundColorNil(t *testing.T) {

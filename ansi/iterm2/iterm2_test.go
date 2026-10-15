@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/owenthereal/x/ansi"
 )
 
 func TestITerm2(t *testing.T) {

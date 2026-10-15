@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi/parser"
+	"github.com/owenthereal/x/ansi/parser"
 )
 
 func TestDcsSequence(t *testing.T) {
