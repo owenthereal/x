@@ -10,7 +10,8 @@ package vt
 // is the most work charged between two calls, except for the pieces handed
 // over whole (a line to history, a row of tab stops, a SetCell's scan from a
 // placeholder, the scan for a wide character a shift or a print cuts), which
-// are larger only on a screen more than MeterInterval columns wide, or with a
+// are larger only on a screen more than MeterInterval columns wide (for the
+// tab stops, one that was, since a narrowing leaves them as wide), or with a
 // scrollback longer than that. The work done between two calls can be more:
 // a fill or a run of SetCells charges a span before writing it, and each
 // placeholder's scan inside it as it comes, so a scan that brings a call
@@ -57,8 +58,8 @@ package vt
 //	(uv.TabStops).Prev                 Emulator.prevTab: whole, charged with the columns left of the cursor
 //	(uv.TabStops).IsStop               Emulator.nextTabStop: once per column, which nextTab charges with the columns right of the cursor
 //	(uv.TabStops).IsStop               Emulator.TabStops: once per column, outside Write and Resize
-//	(*uv.TabStops).Width               Emulator.widenTabStops: a constant
-//	(*uv.TabStops).Clear               Emulator.registerDefaultCsiHandlers: whole, charged with the width (TBC 3)
+//	(*uv.TabStops).Width               Emulator.widenTabStops, Emulator.registerDefaultCsiHandlers: a constant
+//	(*uv.TabStops).Clear               Emulator.registerDefaultCsiHandlers: whole, charged with the tab stops' width, which a narrowing leaves wider than the screen (TBC 3)
 //	(*uv.TabStops).Resize              Emulator.widenTabStops: whole, at most the new width, which Emulator.Resize charges
 //	uv.DefaultTabStops                 NewEmulator, Emulator.resetTabStops: whole, charged with the width, outside Write in NewEmulator
 //	uv.NewRenderBuffer                 NewScreen, Screen.resize: outside the meter, for a screen built from nothing, which no emulator's is once made

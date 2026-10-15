@@ -776,8 +776,9 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 				e.tabstops.Reset(x)
 			}
 		case 3:
-			// Clearing every stop is a piece of work as wide as the screen.
-			if e.meter.spend(max(e.Width(), 1)) {
+			// Clearing every stop is a piece of work as wide as the tab
+			// stops, which a narrowing leaves wider than the screen.
+			if e.meter.spend(max(e.tabstops.Width(), 1)) {
 				e.tabstops.Clear()
 				e.stopsCleared = true
 			}

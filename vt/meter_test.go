@@ -759,3 +759,23 @@ func FuzzMeterInterval(f *testing.F) {
 		_ = e.Render()
 	})
 }
+
+// TBC 3 clears every stop in the tab stop bitmap, which is as wide as the
+// widest screen since the last RIS: a narrowing changes none of the stops. So
+// it is a piece of work as wide as the bitmap, not as the screen, and is
+// charged so.
+func TestTBC3IsChargedTheWidthOfTheTabStops(t *testing.T) {
+	const wide, narrow = 5000, 10
+	e := NewEmulator(wide, 2)
+	e.Resize(narrow, 2)
+	if got := e.tabstops.Width(); got != wide {
+		t.Fatalf("tab stops after narrowing from %d to %d columns: width got = %d, want = %d", wide, narrow, got, wide)
+	}
+
+	const tbc3 = "\x1b[3g"
+	charged, _ := charges(e, func() { e.WriteString(tbc3) })
+	// The bytes parsed are charged too: one operation each.
+	if want := e.tabstops.Width() + len(tbc3); charged != want {
+		t.Errorf("TBC 3 on a %d-column screen with %d columns of tab stops: charged %d cell operations, want %d", e.Width(), e.tabstops.Width(), charged, want)
+	}
+}
