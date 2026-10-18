@@ -441,6 +441,11 @@ func FuzzWriteSplitMatchesWhole(f *testing.F) {
 		{1, 1, []string{"世", "\u093f"}},
 		{5, 1, []string{"\x1b[?7labcd世", "\u093f"}},
 		{5, 1, []string{"\x1b[?7labcd\U0001F600", "\u093f"}},
+		// TestSCORCRestoresWhereSCOSCSaved, cut inside the SCORC and the
+		// SCOSC, and a CSI u with a parameter cut before its final.
+		{20, 6, []string{"\x1b[5;10H\x1b[s\x1b[1;1Hstatus\x1b", "[u"}},
+		{20, 6, []string{"\x1b[5;10H\x1b[", "s\x1b[1;1Hstatus\x1b[", "u"}},
+		{20, 6, []string{"\x1b[5;10H\x1b[s\x1b[1;1H\x1b[1", "u", "\x1b[u"}},
 		// Past the bound: one Write joins the mark, split doesn't.
 		{10, 1, []string{"e" + strings.Repeat("\u0301", 64), "\u0301"}},
 	}
