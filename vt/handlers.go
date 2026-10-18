@@ -945,4 +945,16 @@ func (e *Emulator) registerDefaultCsiHandlers() {
 
 		return true
 	})
+
+	e.RegisterCsiHandler('u', func(params ansi.Params) bool {
+		// Restore Current Cursor Position [ansi.SCORC], which restores what
+		// DECRC does, as in xterm. Only a CSI u with no parameter does, and
+		// DECLRMM makes no difference. The kitty keyboard protocol's CSI u
+		// forms carry a prefix, so they are other commands.
+		if len(params) != 0 {
+			return false
+		}
+		e.restoreCursor()
+		return true
+	})
 }
