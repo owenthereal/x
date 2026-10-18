@@ -16,13 +16,17 @@ import (
 
 // saveRestore is each pair of sequences that fills the active screen's DECSC
 // slot and restores it. xterm's CASE_DECSC and srm_SAVE_CURSOR (?1048h) call
-// CursorSave, CASE_DECRC and ?1048l CursorRestore, and so does CASE_ANSI_SC
-// (CSI s while DECLRMM is reset) for SCOSC; x/vt has no SCORC, so DECRC
-// restores what SCOSC saved.
+// CursorSave, CASE_DECRC and ?1048l CursorRestore, and so do CASE_ANSI_SC
+// (CSI s while DECLRMM is reset, with no parameter) for SCOSC and
+// CASE_ANSI_RC (CSI u with no parameter) for SCORC (charproc.c:4884-4923), so
+// any save restores through any restore.
 var saveRestore = []struct{ name, save, restore string }{
 	{"DECSC", "\x1b7", "\x1b8"},
 	{"?1048", "\x1b[?1048h", "\x1b[?1048l"},
 	{"SCOSC", "\x1b[s", "\x1b8"},
+	{"SCOSC and SCORC", "\x1b[s", "\x1b[u"},
+	{"DECSC and SCORC", "\x1b7", "\x1b[u"},
+	{"?1048h and SCORC", "\x1b[?1048h", "\x1b[u"},
 }
 
 // defaultCharsets is what resetCharsets designates (charproc.c:1271-1274,
@@ -33,6 +37,38 @@ var defaultCharsets = [4]byte{'B', 'B', 'B', 'B'}
 // String is its embedded Position's.
 func slot(c Cursor) string {
 	return fmt.Sprintf("%v pen %+v link %+v hidden %v style %v steady %v %+v", c.Position, c.Pen, c.Link, c.Hidden, c.Style, c.Steady, c.Saved)
+}
+
+// CursorSave2 saves the position, the rendition and the colors in the slot
+// (sc->row, sc->col, sc->flags, sc->cur_foreground, sc->cur_background,
+// cursor.c:398-416), and CursorRestoreFlags puts them back, the position with
+// CursorSet. x/vt's link is saved with the pen.
+func TestDECRCRestoresThePositionPenAndLink(t *testing.T) {
+	for _, p := range saveRestore {
+		t.Run(p.name, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 5)
+			_, _ = e.WriteString("\x1b[3;4H\x1b[1;31m\x1b]8;;https://example.com\x07")
+			pen := e.scr.Cursor().Pen
+			if pen.IsZero() {
+				t.Fatal("pen after SGR 1;31: got = none")
+			}
+			_, _ = e.WriteString(p.save + "\x1b[1;1H\x1b[m\x1b]8;;\x07" + p.restore)
+			if pos := e.CursorPosition(); pos != uv.Pos(3, 2) {
+				t.Errorf("cursor: got = %v, want = (3,2)", pos)
+			}
+			c := e.scr.Cursor()
+			if c.Pen != pen {
+				t.Errorf("pen: got = %+v, want = %+v", c.Pen, pen)
+			}
+			if c.Link.URL != "https://example.com" {
+				t.Errorf("link: got = %+v, want https://example.com", c.Link)
+			}
+			_, _ = e.WriteString("x")
+			if cell := e.CellAt(3, 2); cell == nil || cell.Content != "x" || cell.Style != c.Pen || cell.Link != c.Link {
+				t.Errorf("cell (3,2): got = %+v, want x in the restored pen and link", cell)
+			}
+		})
+	}
 }
 
 // CursorRestoreFlags restores the charsets G0-G3 a save holds
@@ -200,7 +236,7 @@ func Test1049SavesAndRestoresTheCursorState(t *testing.T) {
 // for a slot with saved unset, is never taken for the VT100 window.
 func TestDECRCWithNoSaveRestoresTheDefaults(t *testing.T) {
 	const changed = "\x1b(0\x1b)A\x1b*0\x1b+A\x0e\x1b|\x1b[1;31m\x1b]8;;https://example.com\x07\x1b[?6h0123456789"
-	for _, restore := range []string{"\x1b8", "\x1b[?1048l"} {
+	for _, restore := range []string{"\x1b8", "\x1b[?1048l", "\x1b[u"} {
 		t.Run(restore, func(t *testing.T) {
 			e := newTestTerminal(t, 10, 3)
 			_, _ = e.WriteString(changed + restore)
@@ -248,6 +284,117 @@ func TestDECRCWithNoSaveRestoresTheDefaults(t *testing.T) {
 			t.Errorf("SingleShift: got = %d, want = 2", got)
 		}
 	})
+}
+
+// SCOSC, text drawn elsewhere and SCORC: the cursor comes back to the cell it
+// was saved in, and the next character lands there.
+func TestSCORCRestoresWhereSCOSCSaved(t *testing.T) {
+	e := newTestTerminal(t, 20, 10)
+	_, _ = e.WriteString("\x1b[5;10H\x1b[s\x1b[1;1Hstatus\x1b[u")
+	if pos := e.CursorPosition(); pos != uv.Pos(9, 4) {
+		t.Errorf("cursor: got = %v, want = (9,4)", pos)
+	}
+	if got := rowText(e, 0); got != "status" {
+		t.Errorf("row 0: got = %q, want = %q", got, "status")
+	}
+	_, _ = e.WriteString("x")
+	if c := e.CellAt(9, 4); c == nil || c.Content != "x" {
+		t.Errorf("cell (9,4): got = %+v, want x", c)
+	}
+}
+
+// CASE_ANSI_RC is reached from csi_table and csi2_table, after a parameter
+// too (VTPrsTbl.c:626, 950), and restores only if only_default() holds:
+// nparam <= 1 and GetParam(0) == DEFAULT (charproc.c:2219-2223, 4912-4914). A
+// CSI u with a parameter, even 0, or with a separator does nothing, and so
+// does one with a colon, whose subparameter handling resets the parameters
+// to 0 before CASE_ANSI_RC looks (charproc.c:3497-3544, 1649-1658). The slot
+// stays for the next restore.
+func TestSCORCWithParametersRestoresNothing(t *testing.T) {
+	for _, in := range []string{"\x1b[1u", "\x1b[0u", "\x1b[;u", "\x1b[1;2u", "\x1b[1:2u", "\x1b[:u"} {
+		t.Run(in, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 5)
+			_, _ = e.WriteString("\x1b[3;4H\x1b[1m\x1b[s\x1b[1;1H\x1b[m" + in)
+			if pos := e.CursorPosition(); pos != uv.Pos(0, 0) {
+				t.Errorf("cursor after %q: got = %v, want home", in, pos)
+			}
+			if c := e.scr.Cursor(); !c.Pen.IsZero() {
+				t.Errorf("pen after %q: got = %+v, want none", in, c.Pen)
+			}
+			_, _ = e.WriteString("\x1b[u")
+			if pos := e.CursorPosition(); pos != uv.Pos(3, 2) {
+				t.Errorf("cursor after the bare CSI u: got = %v, want the slot's (3,2)", pos)
+			}
+		})
+	}
+}
+
+// The kitty keyboard protocol's CSI ? u, CSI > Ps u, CSI < Ps u and CSI = Ps u
+// are not SCORC. xterm's csi_table sends CSI < to CASE_CSI_IGNORE
+// (VTPrsTbl.c:555), and its dec_table, dec2_table and dec3_table, for CSI ?,
+// CSI > and CSI =, end a u in the ground state (VTPrsTbl.c:4198, 4848, 5172);
+// an intermediate does the same (csi_ex_table, VTPrsTbl.c:1274). None moves the
+// cursor or reads the slot.
+func TestSCORCIsNotTheKittyKeyboardSequences(t *testing.T) {
+	for _, in := range []string{"\x1b[?u", "\x1b[>1u", "\x1b[>u", "\x1b[<u", "\x1b[<1u", "\x1b[=1;1u", "\x1b[=5u", "\x1b[!u"} {
+		t.Run(in, func(t *testing.T) {
+			e := newTestTerminal(t, 10, 5)
+			_, _ = e.WriteString("\x1b[3;4H\x1b[1m\x1b[s\x1b[1;1H\x1b[m" + in)
+			if pos := e.CursorPosition(); pos != uv.Pos(0, 0) {
+				t.Errorf("cursor after %q: got = %v, want home", in, pos)
+			}
+			if c := e.scr.Cursor(); !c.Pen.IsZero() {
+				t.Errorf("pen after %q: got = %+v, want none", in, c.Pen)
+			}
+			if got := e.MainScreen().SavedCursor(); got.Position != uv.Pos(3, 2) || !got.Saved.Saved {
+				t.Errorf("slot after %q: got = %s, want the save at (3,2)", in, slot(got))
+			}
+			_, _ = e.WriteString("\x1b[u")
+			if pos := e.CursorPosition(); pos != uv.Pos(3, 2) {
+				t.Errorf("cursor after the bare CSI u: got = %v, want the slot's (3,2)", pos)
+			}
+		})
+	}
+}
+
+// CASE_ANSI_RC runs CursorRestore with no regard to DECLRMM, unlike
+// CASE_ANSI_SC, which turns CSI s into DECSLRM while it is set
+// (charproc.c:4884-4915): a slot filled by DECSC comes back through CSI u
+// with left and right margins on.
+func TestSCORCRestoresWithMarginModeSet(t *testing.T) {
+	e := newTestTerminal(t, 10, 5)
+	_, _ = e.WriteString("\x1b[3;4H\x1b7\x1b[?69h\x1b[1;1H\x1b[u")
+	if got := e.Mode(ansi.ModeLeftRightMargin); got != ansi.ModeSet {
+		t.Errorf("DECLRMM: got = %v, want = %v", got, ansi.ModeSet)
+	}
+	if pos := e.CursorPosition(); pos != uv.Pos(3, 2) {
+		t.Errorf("cursor: got = %v, want the slot's (3,2)", pos)
+	}
+}
+
+// CursorRestore reads the slot of the screen showing, &screen->sc[
+// screen->whichBuf] (cursor.c:422, 520), so a CSI u on the alternate screen
+// reads its own slot, which no save has filled, and not the main screen's.
+func TestSCORCReadsTheActiveScreensSlot(t *testing.T) {
+	e := newTestTerminal(t, 10, 5)
+	_, _ = e.WriteString("\x1b[3;4H\x1b[s\x1b[?1047h\x1b[4;5H\x1b[u")
+	if !e.IsAltScreen() {
+		t.Fatal("not on the alternate screen after ?1047h")
+	}
+	if pos := e.CursorPosition(); pos != uv.Pos(0, 0) {
+		t.Errorf("cursor after CSI u on the alternate screen: got = %v, want home", pos)
+	}
+	_, _ = e.WriteString("\x1b[2;2H\x1b[s\x1b[4;5H\x1b[u")
+	if pos := e.CursorPosition(); pos != uv.Pos(1, 1) {
+		t.Errorf("cursor after SCOSC and SCORC on the alternate screen: got = %v, want = (1,1)", pos)
+	}
+	_, _ = e.WriteString("\x1b[?1047l\x1b[1;1H\x1b[u")
+	if e.IsAltScreen() {
+		t.Fatal("still on the alternate screen after ?1047l")
+	}
+	if pos := e.CursorPosition(); pos != uv.Pos(3, 2) {
+		t.Errorf("cursor after CSI u on the main screen: got = %v, want the main slot's (3,2)", pos)
+	}
 }
 
 // SavedCursor reports what CursorSave2 put in the slot, on each screen: the
